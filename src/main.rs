@@ -97,6 +97,7 @@ fn main() -> Result<()> {
             .status();
         match status {
             Ok(s) if s.success() => info!("Upload to Google Drive successful!"),
+            Ok(s) if s.code() == Some(2) => info!("Google Drive upload skipped (configuration required)."),
             Ok(s) => log::warn!("Upload script exited with status: {}", s),
             Err(e) => log::warn!("Failed to run upload script: {}", e),
         }

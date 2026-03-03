@@ -17,6 +17,8 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from googleapiclient.errors import HttpError
 
+EXIT_SKIPPED = 2
+
 
 def parse_http_error(err):
     reason = ""
@@ -74,6 +76,18 @@ def main():
         print("Hint: check internet/DNS connectivity and retry.")
         sys.exit(1)
 
+    # Service accounts cannot upload into personal "My Drive" folders.
+    if not shared_drive_id and not impersonate_user:
+        print(
+            "Upload skipped: folder_id is in 'My Drive' and service accounts have no storage quota."
+        )
+        print(
+            "Fix: move the folder to a Shared Drive (or set shared_drive_id) "
+            "or configure google_drive.impersonate_user."
+        )
+        print("Current folder_id: " + fid)
+        sys.exit(EXIT_SKIPPED)
+
     safe_name = fn.replace("'", "\\'")
     q="name='%s' and '%s' in parents and trashed=false" % (safe_name,fid)
     list_args = {
@@ -118,6 +132,7 @@ def main():
                 "or set google_drive.impersonate_user with domain-wide delegation."
             )
             print("Current folder_id: " + fid)
+            sys.exit(EXIT_SKIPPED)
         elif reason in {"notFound", "insufficientFilePermissions"}:
             print("Hint: the service account may not have access to this folder_id: " + fid)
         elif message:
