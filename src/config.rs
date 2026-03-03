@@ -41,9 +41,23 @@ fn default_token_path() -> String {
 pub struct Weights {
     pub age_homogeneity_drinks: f64,
     pub age_homogeneity_dinner: f64,
+    #[serde(default = "default_gender_balance_weight")]
+    pub gender_balance_drinks: f64,
+    #[serde(default = "default_gender_balance_weight")]
+    pub gender_balance_dinner: f64,
     pub avoid_same_host_drinks_dinner: f64,
+    #[serde(default = "default_avoid_pair_same_event_weight")]
+    pub avoid_pair_same_event: f64,
     pub minimize_walk_time: f64,
     pub host_walk_drinks_to_dinner: f64,
+}
+
+fn default_gender_balance_weight() -> f64 {
+    8.0
+}
+
+fn default_avoid_pair_same_event_weight() -> f64 {
+    6.0
 }
 
 #[derive(Debug, Deserialize, Clone)]

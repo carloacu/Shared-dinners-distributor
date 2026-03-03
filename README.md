@@ -59,7 +59,10 @@ Les fichiers de sortie sont timestampes et non ecrases :
     weights:
       age_homogeneity_drinks: 1.5
       age_homogeneity_dinner: 1.5
+      gender_balance_drinks: 8.0
+      gender_balance_dinner: 8.0
       avoid_same_host_drinks_dinner: 3.0
+      avoid_pair_same_event: 6.0
       minimize_walk_time: 2.0
       host_walk_drinks_to_dinner: 4.0
     simulated_annealing:

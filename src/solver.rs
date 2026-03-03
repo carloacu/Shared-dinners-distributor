@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::geo::TravelMatrix;
-use crate::model::{group_members, unique_groups, Person};
+use crate::model::{group_members, unique_groups, Gender, Person};
 use anyhow::{anyhow, Result};
 use log::info;
 use rand::prelude::*;
@@ -89,28 +89,26 @@ pub fn evaluate(sol: &Solution, people: &[Person], travel: &TravelMatrix, cfg: &
     let w = &cfg.weights;
     let mut cost = 0.0;
 
-    // --- 1. Age homogeneity for drinks groups ---
-    let mut drinks_groups: HashMap<usize, Vec<u32>> = HashMap::new();
+    // Build groups once
+    let mut drinks_groups: HashMap<usize, Vec<usize>> = HashMap::new();
+    let mut dinner_groups: HashMap<usize, Vec<usize>> = HashMap::new();
     for i in 0..n {
-        drinks_groups
-            .entry(sol.drinks_host[i])
-            .or_default()
-            .push(people[i].age());
-    }
-    for ages in drinks_groups.values() {
-        cost += w.age_homogeneity_drinks * age_variance(ages);
+        drinks_groups.entry(sol.drinks_host[i]).or_default().push(i);
+        dinner_groups.entry(sol.dinner_host[i]).or_default().push(i);
     }
 
-    // --- 2. Age homogeneity for dinner groups ---
-    let mut dinner_groups: HashMap<usize, Vec<u32>> = HashMap::new();
-    for i in 0..n {
-        dinner_groups
-            .entry(sol.dinner_host[i])
-            .or_default()
-            .push(people[i].age());
+    // --- 1. Age + gender balance for drinks groups ---
+    for members in drinks_groups.values() {
+        let ages: Vec<u32> = members.iter().map(|&idx| people[idx].age()).collect();
+        cost += w.age_homogeneity_drinks * age_variance(&ages);
+        cost += w.gender_balance_drinks * gender_imbalance(members, people);
     }
-    for ages in dinner_groups.values() {
-        cost += w.age_homogeneity_dinner * age_variance(ages);
+
+    // --- 2. Age + gender balance for dinner groups ---
+    for members in dinner_groups.values() {
+        let ages: Vec<u32> = members.iter().map(|&idx| people[idx].age()).collect();
+        cost += w.age_homogeneity_dinner * age_variance(&ages);
+        cost += w.gender_balance_dinner * gender_imbalance(members, people);
     }
 
     // --- 3. Penalty for being at same host for drinks and dinner ---
@@ -143,6 +141,21 @@ pub fn evaluate(sol: &Solution, people: &[Person], travel: &TravelMatrix, cfg: &
         }
     }
 
+    // --- 6. Avoid repeated pairings in the same event (except same ID) ---
+    for i in 0..n {
+        for j in (i + 1)..n {
+            if people[i].group_id == people[j].group_id {
+                continue;
+            }
+            if sol.drinks_host[i] == sol.drinks_host[j] {
+                cost += w.avoid_pair_same_event;
+            }
+            if sol.dinner_host[i] == sol.dinner_host[j] {
+                cost += w.avoid_pair_same_event;
+            }
+        }
+    }
+
     cost
 }
 
@@ -155,6 +168,23 @@ fn age_variance(ages: &[u32]) -> f64 {
         .map(|a| (*a as f64 - mean).powi(2))
         .sum::<f64>()
         / ages.len() as f64
+}
+
+fn gender_imbalance(members: &[usize], people: &[Person]) -> f64 {
+    let mut male = 0usize;
+    let mut female = 0usize;
+    for idx in members {
+        match people[*idx].gender {
+            Gender::Male => male += 1,
+            Gender::Female => female += 1,
+            Gender::Other => {}
+        }
+    }
+    let total = male + female;
+    if total <= 1 {
+        return 0.0;
+    }
+    (male as f64 - female as f64).abs() / total as f64
 }
 
 // ─── Initial valid solution ───────────────────────────────────────────────────

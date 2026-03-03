@@ -8,6 +8,8 @@ struct CsvRow {
     #[serde(rename = "ID")]
     id: u32,
     name: String,
+    #[serde(default)]
+    gender: String,
     year_of_birth: u32,
     postal_address: String,
     postal_code: String,
@@ -24,6 +26,7 @@ pub struct Person {
     /// The group ID (same ID = travel together)
     pub group_id: u32,
     pub name: String,
+    pub gender: Gender,
     pub year_of_birth: u32,
     /// Full address string
     pub address: String,
@@ -31,6 +34,23 @@ pub struct Person {
     pub max_guests_drinks: usize,
     pub receiving_for_dinner: bool,
     pub max_guests_dinner: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Gender {
+    Male,
+    Female,
+    Other,
+}
+
+impl Gender {
+    fn from_csv(value: &str) -> Self {
+        match value.trim().to_lowercase().as_str() {
+            "m" | "male" | "man" | "homme" | "garcon" | "boy" => Gender::Male,
+            "f" | "female" | "woman" | "femme" | "fille" | "girl" => Gender::Female,
+            _ => Gender::Other,
+        }
+    }
 }
 
 impl Person {
@@ -56,6 +76,7 @@ pub fn load_people(path: &str) -> Result<Vec<Person>> {
         people.push(Person {
             group_id: row.id,
             name: row.name,
+            gender: Gender::from_csv(&row.gender),
             year_of_birth: row.year_of_birth,
             address,
             receiving_for_drinks: row.recieving_for_drinks.trim().to_lowercase() == "yes",
