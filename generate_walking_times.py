@@ -25,12 +25,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--input",
-        default="input.kml",
+        default="data/input.kml",
         help="Path to input KML file (default: input.kml).",
     )
     parser.add_argument(
         "--output",
-        default="walking_times.csv",
+        default="data/walking_times.csv",
         help="Path to output CSV file (default: walking_times.csv).",
     )
     parser.add_argument(
