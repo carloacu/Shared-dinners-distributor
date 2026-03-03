@@ -17,6 +17,7 @@ pub struct Config {
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
+#[allow(dead_code)]
 pub struct GoogleDriveConfig {
     #[serde(default)]
     pub enabled: bool,
