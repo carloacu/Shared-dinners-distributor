@@ -12,7 +12,7 @@ pub fn write_result(
     people: &[Person],
     dessert_address: &str,
     travel: &TravelMatrix,
-    cfg: &Config,
+    _cfg: &Config,
     path: &str,
 ) -> Result<()> {
     if let Some(parent) = Path::new(path).parent() {

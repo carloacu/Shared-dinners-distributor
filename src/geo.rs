@@ -128,6 +128,7 @@ fn fetch_ors_seconds_by_address(from: &str, to: &str, api_key: &str) -> Result<f
 // ─── TravelMatrix ─────────────────────────────────────────────────────────────
 
 pub struct TravelMatrix {
+    #[allow(dead_code)]
     pub n: usize,
     /// home_to[i][j] = walk seconds from person i's address to person j's address
     pub home_to: Vec<Vec<f64>>,
