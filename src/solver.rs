@@ -280,64 +280,52 @@ fn systematic_initial(
     let n = people.len();
     let groups = unique_groups(people);
 
-    // Count group sizes
-    let group_sizes: Vec<usize> = groups
+    let group_members_list: Vec<Vec<usize>> = groups
         .iter()
-        .map(|(_, rep)| group_members(people, *rep).len())
+        .map(|(_, rep)| group_members(people, *rep))
+        .collect();
+    let group_sizes: Vec<usize> = group_members_list.iter().map(|m| m.len()).collect();
+    let group_need_pmr: Vec<bool> = group_members_list
+        .iter()
+        .map(|members| members.iter().any(|&i| people[i].need_pmr))
         .collect();
 
-    // Try to fill drinks hosts
-    let mut drinks_assign: Vec<Option<usize>> = vec![None; groups.len()]; // group -> host index
-    let mut drinks_used: HashMap<usize, usize> = HashMap::new();
+    let drinks_caps: Vec<usize> = hosts_drinks
+        .iter()
+        .map(|&h| people[h].max_guests_drinks)
+        .collect();
+    let drinks_can_pmr: Vec<bool> = hosts_drinks.iter().map(|&h| people[h].can_host_pmr).collect();
+    let drinks_assign = assign_groups_to_hosts(
+        &group_sizes,
+        &group_need_pmr,
+        hosts_drinks,
+        &drinks_caps,
+        &drinks_can_pmr,
+        cfg.min_guests_for_drinks,
+    )
+    .ok_or_else(|| anyhow!("Cannot find valid drinks assignment with current min/max and PMR constraints"))?;
 
-    let mut gi = 0;
-    let mut hi = 0;
-    let hd_len = hosts_drinks.len();
-    while gi < groups.len() {
-        let host = hosts_drinks[hi % hd_len];
-        let cap = people[host].max_guests_drinks;
-        let used = *drinks_used.get(&host).unwrap_or(&0);
-        let gs = group_sizes[gi];
-        if used + gs <= cap {
-            drinks_assign[gi] = Some(host);
-            *drinks_used.entry(host).or_insert(0) += gs;
-            gi += 1;
-        }
-        hi += 1;
-        if hi > hd_len * groups.len() {
-            return Err(anyhow!("Cannot find valid drinks assignment within capacity"));
-        }
-    }
-
-    // Try to fill dinner hosts
-    let mut dinner_assign: Vec<Option<usize>> = vec![None; groups.len()];
-    let mut dinner_used: HashMap<usize, usize> = HashMap::new();
-
-    let mut gi = 0;
-    let mut hi = 0;
-    let hn_len = hosts_dinner.len();
-    while gi < groups.len() {
-        let host = hosts_dinner[hi % hn_len];
-        let cap = people[host].max_guests_dinner;
-        let used = *dinner_used.get(&host).unwrap_or(&0);
-        let gs = group_sizes[gi];
-        if used + gs <= cap {
-            dinner_assign[gi] = Some(host);
-            *dinner_used.entry(host).or_insert(0) += gs;
-            gi += 1;
-        }
-        hi += 1;
-        if hi > hn_len * groups.len() {
-            return Err(anyhow!("Cannot find valid dinner assignment within capacity"));
-        }
-    }
+    let dinner_caps: Vec<usize> = hosts_dinner
+        .iter()
+        .map(|&h| people[h].max_guests_dinner)
+        .collect();
+    let dinner_can_pmr: Vec<bool> = hosts_dinner.iter().map(|&h| people[h].can_host_pmr).collect();
+    let dinner_assign = assign_groups_to_hosts(
+        &group_sizes,
+        &group_need_pmr,
+        hosts_dinner,
+        &dinner_caps,
+        &dinner_can_pmr,
+        cfg.min_guests_for_dinner,
+    )
+    .ok_or_else(|| anyhow!("Cannot find valid dinner assignment with current min/max and PMR constraints"))?;
 
     let mut drinks_host = vec![0usize; n];
     let mut dinner_host = vec![0usize; n];
-    for (gi, (_, rep)) in groups.iter().enumerate() {
-        for member in group_members(people, *rep) {
-            drinks_host[member] = drinks_assign[gi].unwrap();
-            dinner_host[member] = dinner_assign[gi].unwrap();
+    for (gi, members) in group_members_list.iter().enumerate() {
+        for member in members {
+            drinks_host[*member] = drinks_assign[gi];
+            dinner_host[*member] = dinner_assign[gi];
         }
     }
 
@@ -346,6 +334,150 @@ fn systematic_initial(
         return Err(anyhow!("Systematic assignment produced an invalid solution"));
     }
     Ok(sol)
+}
+
+fn assign_groups_to_hosts(
+    group_sizes: &[usize],
+    group_need_pmr: &[bool],
+    hosts: &[usize],
+    host_caps: &[usize],
+    host_can_pmr: &[bool],
+    min_guests: usize,
+) -> Option<Vec<usize>> {
+    if group_sizes.is_empty() {
+        return Some(Vec::new());
+    }
+
+    let total_people: usize = group_sizes.iter().sum();
+    let total_capacity: usize = host_caps.iter().sum();
+    if total_people > total_capacity {
+        return None;
+    }
+
+    let mut order: Vec<usize> = (0..group_sizes.len()).collect();
+    order.sort_by_key(|&gi| {
+        (
+            std::cmp::Reverse(group_need_pmr[gi] as u8),
+            std::cmp::Reverse(group_sizes[gi]),
+        )
+    });
+
+    let mut counts = vec![0usize; hosts.len()];
+    let mut assigned_host_slot = vec![usize::MAX; order.len()];
+    let remaining_people = total_people;
+    let remaining_pmr_people: usize = order
+        .iter()
+        .filter(|&&gi| group_need_pmr[gi])
+        .map(|&gi| group_sizes[gi])
+        .sum();
+
+    if backtrack_assign_groups(
+        0,
+        &order,
+        group_sizes,
+        group_need_pmr,
+        host_caps,
+        host_can_pmr,
+        min_guests,
+        &mut counts,
+        &mut assigned_host_slot,
+        remaining_people,
+        remaining_pmr_people,
+    ) {
+        let mut assignment = vec![0usize; group_sizes.len()];
+        for (pos, &gi) in order.iter().enumerate() {
+            assignment[gi] = hosts[assigned_host_slot[pos]];
+        }
+        Some(assignment)
+    } else {
+        None
+    }
+}
+
+fn backtrack_assign_groups(
+    pos: usize,
+    order: &[usize],
+    group_sizes: &[usize],
+    group_need_pmr: &[bool],
+    host_caps: &[usize],
+    host_can_pmr: &[bool],
+    min_guests: usize,
+    counts: &mut [usize],
+    assigned_host_slot: &mut [usize],
+    remaining_people: usize,
+    remaining_pmr_people: usize,
+) -> bool {
+    if pos == order.len() {
+        return counts.iter().all(|&c| c == 0 || c >= min_guests);
+    }
+
+    let gi = order[pos];
+    let gsize = group_sizes[gi];
+    let need_pmr = group_need_pmr[gi];
+
+    for host_slot in 0..host_caps.len() {
+        if need_pmr && !host_can_pmr[host_slot] {
+            continue;
+        }
+        if counts[host_slot] + gsize > host_caps[host_slot] {
+            continue;
+        }
+
+        counts[host_slot] += gsize;
+        assigned_host_slot[pos] = host_slot;
+
+        let next_remaining_people = remaining_people - gsize;
+        let next_remaining_pmr_people = if need_pmr {
+            remaining_pmr_people - gsize
+        } else {
+            remaining_pmr_people
+        };
+
+        let deficit_sum: usize = counts
+            .iter()
+            .filter(|&&c| c > 0 && c < min_guests)
+            .map(|&c| min_guests - c)
+            .sum();
+        let capacity_left: usize = host_caps
+            .iter()
+            .zip(counts.iter())
+            .map(|(cap, used)| cap.saturating_sub(*used))
+            .sum();
+        let pmr_capacity_left: usize = host_caps
+            .iter()
+            .zip(counts.iter())
+            .zip(host_can_pmr.iter())
+            .filter(|(_, can_pmr)| **can_pmr)
+            .map(|((cap, used), _)| cap.saturating_sub(*used))
+            .sum();
+
+        let feasible = deficit_sum <= next_remaining_people
+            && capacity_left >= next_remaining_people
+            && pmr_capacity_left >= next_remaining_pmr_people;
+
+        if feasible
+            && backtrack_assign_groups(
+                pos + 1,
+                order,
+                group_sizes,
+                group_need_pmr,
+                host_caps,
+                host_can_pmr,
+                min_guests,
+                counts,
+                assigned_host_slot,
+                next_remaining_people,
+                next_remaining_pmr_people,
+            )
+        {
+            return true;
+        }
+
+        counts[host_slot] -= gsize;
+    }
+
+    assigned_host_slot[pos] = usize::MAX;
+    false
 }
 
 // ─── Simulated Annealing ──────────────────────────────────────────────────────
