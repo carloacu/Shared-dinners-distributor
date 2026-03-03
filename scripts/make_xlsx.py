@@ -87,7 +87,7 @@ wb = Workbook()
 ws = wb.active
 ws.title = "Vue d'ensemble"
 ws.sheet_view.showGridLines = False
-ws.freeze_panes = "A4"
+ws.freeze_panes = "A3"
 
 ws.merge_cells("A1:G1")
 ws["A1"] = f"🎉 {event_title.upper()} — REPARTITION FINALE"
@@ -95,22 +95,16 @@ ws["A1"].font = Font(name='Arial', bold=True, size=17, color='FFFFFF')
 ws["A1"].fill = fill("0B132B"); ws["A1"].alignment = ctr()
 ws.row_dimensions[1].height = 40
 
-ws.merge_cells("A2:G2")
-ws["A2"] = f"🍰 Dessert : {dessert_addr}"
-ws["A2"].font = Font(name='Arial', italic=True, size=11, color='334155')
-ws["A2"].fill = fill("E2E8F0"); ws["A2"].alignment = ctr()
-ws.row_dimensions[2].height = 20
-
 hdrs   = ["👤 Nom","🍸 Aperitif chez","🍽️ Diner chez","🚶 Maison→Apero (min)","🚶 Apero→Diner (min)","🚶 Diner→Dessert (min)","📊 Total marche (min)"]
 colors = ["1D4ED8","1D4ED8","C2410C","059669","059669","7C3AED","B91C1C"]
 widths = [34,34,34,18,18,20,17]
-ws.row_dimensions[3].height = 26
+ws.row_dimensions[2].height = 26
 for ci,(h,c,w) in enumerate(zip(hdrs,colors,widths),1):
-    cell = ws.cell(row=3,column=ci,value=h)
+    cell = ws.cell(row=2,column=ci,value=h)
     cell.font=hfont(); cell.fill=fill(c); cell.alignment=ctr(); cell.border=bd()
     cw(ws,ci,w)
 
-for ri,r in enumerate(rows,4):
+for ri,r in enumerate(rows,3):
     ws.row_dimensions[ri].height = 19
     same = r['drinks_host']==r['dinner_host']
     bg = fill("FFCCBC") if same else fill("F5F5F5" if ri%2==0 else "FFFFFF")
@@ -122,18 +116,18 @@ for ri,r in enumerate(rows,4):
         c.alignment=lft() if ci==1 else ctr(); c.border=bd()
         if ci>=4: c.number_format='0.0'
 
-tr = len(rows)+4
+tr = len(rows)+3
 ws.row_dimensions[tr].height = 22
 ws.merge_cells(f"A{tr}:C{tr}")
-ws[f"A{tr}"]="TOTAL"; ws[f"A{tr}"].font=hfont(color='000000')
+ws[f"A{tr}"]="MAXIMUM"; ws[f"A{tr}"].font=hfont(color='000000')
 ws[f"A{tr}"].fill=fill("E3F2FD"); ws[f"A{tr}"].alignment=ctr(); ws[f"A{tr}"].border=bd()
 for ci in range(4,8):
     col=get_column_letter(ci)
-    c=ws.cell(row=tr,column=ci,value=f"=SUM({col}4:{col}{len(rows)+3})")
+    c=ws.cell(row=tr,column=ci,value=f"=MAX({col}3:{col}{len(rows)+2})")
     c.font=hfont(color='000000',size=10); c.fill=fill("E3F2FD")
     c.number_format='0.0'; c.alignment=ctr(); c.border=bd()
 
-ws.conditional_formatting.add(f"G4:G{len(rows)+3}",
+ws.conditional_formatting.add(f"G3:G{len(rows)+2}",
     DataBarRule(start_type='min',end_type='max',color="0284C7",showValue=True))
 
 # ═══ SHEET 2 — Aperitif ══════════════════════════════════════════════════════
@@ -242,6 +236,16 @@ ws5["A1"].fill=fill("263238"); ws5["A1"].alignment=ctr(); ws5.row_dimensions[1].
 
 total_walk=sum(r['total'] for r in rows)
 max_r=max(rows,key=lambda r:r['total']); min_r=min(rows,key=lambda r:r['total'])
+row_by_name = {r['name']: r for r in rows}
+dinner_host_walks = []
+for host_name in sorted(dinner_groups.keys()):
+    host_row = row_by_name.get(host_name)
+    if host_row:
+        dinner_host_walks.append({
+            'name': host_name,
+            'w2': host_row['w2'],
+            'drinks_host': host_row['drinks_host'],
+        })
 
 stats=[
     ("","",""),("👥 PARTICIPANTS","",""),
@@ -249,18 +253,27 @@ stats=[
     ("","",""),("🍸 APERITIF","",""),("Hotes",len(drinks_groups),""),
 ]
 for h,g in drinks_groups.items():
-    stats.append((f"  Chez {h}",f"{len(g)} invites",""))
+    stats.append((f"  Chez {h}",f"{len(g)} participants",""))
 stats+=[("","",""),("🍽️ DINER","",""),("Hotes",len(dinner_groups),"")]
 for h,g in dinner_groups.items():
-    stats.append((f"  Chez {h}",f"{len(g)} invites",""))
+    stats.append((f"  Chez {h}",f"{len(g)} participants",""))
+stats += [("","",""),("🏠 HOTES DINER — Apero→Diner","","")]
+if dinner_host_walks:
+    avg_host_walk = sum(r['w2'] for r in dinner_host_walks) / len(dinner_host_walks)
+    max_host_walk = max(dinner_host_walks, key=lambda r: r['w2'])
+    for r in dinner_host_walks:
+        stats.append((f"  {r['name']}",f"{r['w2']:.1f} min",f"depuis chez {r['drinks_host']}"))
+    stats.append(("  Moyenne hotes",f"{avg_host_walk:.1f} min",""))
+    stats.append(("  Maximum hote",f"{max_host_walk['w2']:.1f} min",f"({max_host_walk['name']})"))
+else:
+    stats.append(("  (aucun hote diner)","",""))
 stats+=[
     ("","",""),("🚶 TEMPS DE MARCHE","",""),
-    ("Total cumule",f"{total_walk:.1f} min","tous"),
     ("Moyenne / personne",f"{total_walk/len(rows):.1f} min",""),
     ("Maximum",f"{max_r['total']:.1f} min",f"({max_r['name']})"),
     ("Minimum",f"{min_r['total']:.1f} min",f"({min_r['name']})"),
 ]
-sections={"👥 PARTICIPANTS","🍸 APERITIF","🍽️ DINER","🚶 TEMPS DE MARCHE"}
+sections={"👥 PARTICIPANTS","🍸 APERITIF","🍽️ DINER","🏠 HOTES DINER — Apero→Diner","🚶 TEMPS DE MARCHE"}
 for ri,(a,b,c) in enumerate(stats,2):
     ws5.row_dimensions[ri].height=20
     for ci,v in enumerate([a,b,c],1):
