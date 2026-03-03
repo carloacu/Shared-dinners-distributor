@@ -1,174 +1,122 @@
-# 🍽️ Progressive Dinner Optimizer
+# Progressive Dinner Optimizer
 
-Un programme Rust qui optimise la répartition des invités pour un **dîner progressif** (apéro → dîner → dessert) en utilisant le **recuit simulé** (Simulated Annealing).
-
----
-
-## 🚀 Installation & exécution
-
-### Prérequis
-- [Rust](https://www.rust-lang.org/tools/install) ≥ 1.75
-- Internet pour compiler les crates et appeler les APIs (géocodage)
-
-### Lancer le programme
-```bash
-# Depuis le dossier progressive_dinner/
-cargo run --release
-```
-
-Logs activés par défaut au niveau `info`. Pour plus de détails :
-```bash
-RUST_LOG=debug cargo run --release
-```
+Programme Rust - diner progressif via recuit simule.
 
 ---
 
-## 📁 Structure des fichiers
+## Installation en 1 commande
 
-```
-progressive_dinner/
-├── Cargo.toml
-├── src/
-│   ├── main.rs       # Point d'entrée, orchestration
-│   ├── config.rs     # Lecture du config.yaml
-│   ├── model.rs      # Chargement du CSV, struct Person
-│   ├── geo.rs        # Géocodage + calcul des temps de marche + caches
-│   ├── solver.rs     # Solution initiale + Recuit Simulé
-│   └── output.rs     # Écriture des résultats
-├── data/
-│   ├── input/
-│   │   ├── people.csv      ← Fichier des participants
-│   │   └── config.yaml     ← Configuration
-│   ├── cache/
-│   │   ├── geocode_cache.json   ← Cache géocodage (auto-généré)
-│   │   └── distance_cache.json  ← Cache distances (auto-généré)
-│   └── output/
-│       ├── result.txt      ← Résultat lisible (auto-généré)
-│       └── result.csv      ← Résultat CSV (auto-généré)
-```
+    bash setup.sh
+
+Ce script fait tout :
+- Verifie/installe Rust
+- Cree `.venv/` sans toucher au Python systeme
+- Installe google-api-python-client, google-auth, pyyaml
+- Cree data/ et credentials/
+- Met a jour .gitignore
+- Compile Rust en mode release
 
 ---
 
-## ⚙️ Configuration (`data/input/config.yaml`)
+## Lancer
 
-```yaml
-# Lieu du dessert (tout le monde s'y retrouve)
-dessert_address: "20 rue de Paris"
-dessert_postal_code: "92130"
-dessert_city: "Issy-les-Moulineaux"
-
-# Nombre minimum d'invités par hôte
-min_guests_for_drinks: 2
-min_guests_for_dinner: 2
-
-# Clé API OpenRouteService (optionnel, gratuit sur openrouteservice.org)
-# Sans clé : utilise la distance à vol d'oiseau × temps de marche estimé
-ors_api_key: "YOUR_ORS_API_KEY_HERE"
-
-# Coefficients d'importance pour chaque critère (plus = plus important)
-weights:
-  age_homogeneity_drinks: 1.5        # Homogénéité des âges à l'apéro
-  age_homogeneity_dinner: 1.5        # Homogénéité des âges au dîner
-  avoid_same_host_drinks_dinner: 3.0 # Pénalité si même hôte apéro + dîner
-  minimize_walk_time: 2.0            # Minimiser le temps de marche total
-  host_walk_drinks_to_dinner: 4.0    # Minimiser le trajet de l'hôte dîner (apéro → chez lui)
-
-# Paramètres du recuit simulé
-simulated_annealing:
-  initial_temperature: 100.0
-  cooling_rate: 0.995
-  min_temperature: 0.01
-  iterations_per_temperature: 200
-  max_iterations: 50000
-```
+    cargo run --release
 
 ---
 
-## 📋 Format du CSV (`data/input/people.csv`)
+## Structure
 
-```csv
-ID,name,year_of_birth,postal_address,postal_code,city,
-    recieving_for_drinks,number_max_recieving_for_drinks,
-    recieving_for_dinner,number_max_recieving_for_dinner
-```
-
-- **ID identique** sur deux lignes → les deux personnes voyagent **toujours ensemble**
-- `recieving_for_drinks=yes` + `number_max_recieving_for_drinks=5` → peut accueillir max 5 personnes à l'apéro
-- `recieving_for_dinner=yes` + `number_max_recieving_for_dinner=6` → peut accueillir max 6 personnes au dîner
-
----
-
-## 🗺️ Géocodage & distances
-
-### Géocodage des adresses
-Utilise l'API **Nominatim** (OpenStreetMap) — **gratuit, sans clé API**.
-Les résultats sont mis en cache dans `data/cache/geocode_cache.json`.
-
-### Calcul des temps de marche
-- **Avec clé ORS** : utilise [OpenRouteService](https://openrouteservice.org/) (gratuit jusqu'à 2000 req/jour) — temps de marche réels.
-- **Sans clé ORS** : estimation haversine (vol d'oiseau) à 5 km/h.
-
-Les résultats sont mis en cache dans `data/cache/distance_cache.json`.
-
-> **Pour obtenir une clé ORS gratuite :** https://openrouteservice.org/dev/#/signup
+    progressive_dinner/
+    |-- setup.sh                  <- lancer en premier
+    |-- Cargo.toml
+    |-- src/
+    |-- scripts/
+    |   +-- upload_to_drive.py    <- Google Drive (optionnel)
+    |-- credentials/              <- ignore par git
+    |   +-- service_account.json
+    +-- data/
+        |-- input/
+        |   |-- people.csv
+        |   +-- config.yaml
+        |-- cache/                <- auto-genere
+        +-- output/               <- auto-genere
 
 ---
 
-## 🧠 Algorithme
+## config.yaml
 
-### 1. Solution initiale
-Affectation aléatoire (avec 10 000 tentatives) des groupes aux hôtes, en respectant toutes les contraintes. Si l'aléatoire échoue, bascule sur une affectation systématique greedy.
-
-### 2. Recuit simulé
-À chaque itération :
-1. **Perturbation** : on déplace aléatoirement un groupe vers un autre hôte (apéro ou dîner).
-2. **Validation** : on vérifie que la nouvelle solution reste valide.
-3. **Acceptation** : on accepte si la solution s'améliore, ou avec une probabilité `exp(-ΔE/T)` si elle se dégrade (pour éviter les minima locaux).
-
-La température décroît progressivement (`T × cooling_rate` à chaque pas).
-
-### Contraintes de validité
-- Tout le monde doit être assigné à un apéro, un dîner et le dessert commun.
-- Les personnes d'un même groupe (même ID) → même hôte apéro ET même hôte dîner.
-- Respect des capacités min/max de chaque hôte.
-
-### Critères d'optimisation
-| Critère | Coefficient config |
-|---|---|
-| Homogénéité des âges par groupe (apéro) | `age_homogeneity_drinks` |
-| Homogénéité des âges par groupe (dîner) | `age_homogeneity_dinner` |
-| Éviter même hôte apéro + dîner | `avoid_same_host_drinks_dinner` |
-| Minimiser temps de marche total | `minimize_walk_time` |
-| Minimiser trajet de l'hôte dîner | `host_walk_drinks_to_dinner` |
+    dessert_address: "20 rue de Paris"
+    dessert_postal_code: "92130"
+    dessert_city: "Issy-les-Moulineaux"
+    min_guests_for_drinks: 2
+    min_guests_for_dinner: 2
+    ors_api_key: ""   # optionnel
+    weights:
+      age_homogeneity_drinks: 1.5
+      age_homogeneity_dinner: 1.5
+      avoid_same_host_drinks_dinner: 3.0
+      minimize_walk_time: 2.0
+      host_walk_drinks_to_dinner: 4.0
+    simulated_annealing:
+      initial_temperature: 100.0
+      cooling_rate: 0.995
+      min_temperature: 0.01
+      iterations_per_temperature: 200
+      max_iterations: 50000
+    google_drive:
+      enabled: false
+      service_account_path: "credentials/service_account.json"
+      folder_id: ""
+      filename: "progressive_dinner_result.xlsx"
 
 ---
 
-## 📄 Résultats
+## Google Drive (optionnel)
 
-Après exécution, deux fichiers sont générés dans `data/output/` :
+**1.** [console.cloud.google.com](https://console.cloud.google.com) -> Nouveau projet
 
-### `result.txt` — Rapport lisible
-```
-=== PROGRESSIVE DINNER – FINAL ASSIGNMENT ===
+**2.** APIs and Services -> Activer -> Google Drive API
 
-╔══════════════════════════════╗
-║         APÉRITIF (DRINKS)    ║
-╚══════════════════════════════╝
-🏠 Chez André (91 bd Rodin 92130 Issy-les-Moulineaux)
-   Invités (4 personnes, âge moyen 27.0 ans):
-     • Robert (né·e 1996, âge 28) — marche depuis chez lui/elle: 8.3 min
-     ...
+**3.** Identifiants -> Compte de service -> Cles -> JSON -> telecharge 
 
-╔══════════════════════════════╗
-║           DÎNER              ║
-╚══════════════════════════════╝
-🍽️  Chez Loic ...
-...
-```
+**4.**
 
-### `result.csv` — Tableau récapitulatif
-```csv
-name,year_of_birth,group_id,drinks_host,dinner_host,dessert
-Robert,1996,1,André,Loic,dessert commun
-...
-```
+    mv ~/Downloads/*.json credentials/service_account.json
+
+**5.** Partager le dossier Drive avec l'email du service account (champ  dans le JSON), role **Editeur**.
+
+**6.** Dans  :
+
+    google_drive:
+      enabled: true
+      folder_id: "ID_APRES_/folders/_DANS_L_URL"
+
+---
+
+## Cache
+
+ - temps de marche entre adresses.
+Si tu changes une adresse dans le CSV :
+
+    rm data/cache/distance_cache.json
+
+---
+
+## Algorithme
+
+### Contraintes
+- Tout le monde : apero + diner + dessert commun
+- Meme ID -> meme hote apero ET meme hote diner
+- Capacites min/max respectees
+
+### Criteres (coefficients dans config.yaml)
+
+Critere                       | Parametre
+------------------------------|--------------------------------
+Homogeneite des ages          | age_homogeneity_drinks/dinner
+Eviter meme hote apero+diner  | avoid_same_host_drinks_dinner
+Minimiser temps de marche     | minimize_walk_time
+Trajet de l hote diner        | host_walk_drinks_to_dinner
+
+### Recuit simule
+A chaque iteration : deplace un groupe vers un autre hote, accepte si amelioration ou avec probabilite exp(-dE/T). T decroit d'un facteur  jusqu'a .

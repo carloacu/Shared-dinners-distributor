@@ -70,10 +70,28 @@ fn main() -> Result<()> {
     output::write_result(&best, &people, &dessert_addr, &travel, &cfg, "data/output/result.txt")?;
     output::write_result_csv(&best, &people, "data/output/result.csv")?;
 
-    // 7. Upload to Google Drive if enabled
+    // Use venv Python if available, otherwise fall back to system python3
+    let python = if std::path::Path::new(".venv/bin/python3").exists() {
+        ".venv/bin/python3"
+    } else {
+        "python3"
+    };
+
+    // 7. Generate Excel file
+    info!("Generating Excel report...");
+    let xlsx_status = std::process::Command::new(python)
+        .arg("scripts/make_xlsx.py")
+        .status();
+    match xlsx_status {
+        Ok(s) if s.success() => info!("Excel report generated: data/output/result.xlsx"),
+        Ok(s) => log::warn!("Excel generation exited with status: {}", s),
+        Err(e) => log::warn!("Failed to run Excel script: {}", e),
+    }
+
+    // 8. Upload to Google Drive if enabled
     if cfg.google_drive.enabled {
         info!("Uploading to Google Drive...");
-        let status = std::process::Command::new("python3")
+        let status = std::process::Command::new(python)
             .arg("scripts/upload_to_drive.py")
             .arg("data/output/result.xlsx")
             .status();

@@ -1,2 +1,6 @@
 data/
 target/
+.venv/
+credentials/
+data/cache/
+data/output/
