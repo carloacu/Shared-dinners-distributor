@@ -68,6 +68,8 @@ Ce script fait tout :
       service_account_path: "credentials/service_account.json"
       folder_id: ""
       filename: "progressive_dinner_result.xlsx"
+      shared_drive_id: ""   # optionnel (recommande avec service account)
+      impersonate_user: ""  # optionnel (delegation domaine requise)
 
 ---
 
@@ -83,13 +85,20 @@ Ce script fait tout :
 
     mv ~/Downloads/*.json credentials/service_account.json
 
-**5.** Partager le dossier Drive avec l'email du service account (champ  dans le JSON), role **Editeur**.
+**5.** Partager le dossier Drive avec l'email du service account (champ `client_email` du JSON), role **Editeur**.
 
-**6.** Dans  :
+**6.** Dans `data/input/config.yaml` :
 
     google_drive:
       enabled: true
       folder_id: "ID_APRES_/folders/_DANS_L_URL"
+      # Option A (recommandee): dossier dans un Shared Drive
+      shared_drive_id: "ID_DU_SHARED_DRIVE"
+      # Option B: impersonation utilisateur (Google Workspace + delegation)
+      impersonate_user: ""
+
+**7.** Si vous voyez `storageQuotaExceeded`: le dossier cible est probablement dans "Mon Drive".
+Avec un service account, utilisez plutot un dossier de Shared Drive ou l'impersonation.
 
 ---
 
