@@ -75,6 +75,8 @@ def age(name): return 2024 - year_map.get(name, 2000)
 
 # Compute walk times for each person
 for r in rows:
+    # Support both historical `group` and current `group_id` CSV headers.
+    r['group'] = r.get('group') or r.get('group_id') or group_map.get(r['name'], '')
     person_addr      = addr_map.get(r['name'], '')
     drinks_host_addr = addr_map.get(r['drinks_host'], '')
     dinner_host_addr = addr_map.get(r['dinner_host'], '')
