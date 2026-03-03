@@ -101,7 +101,7 @@ ws["A2"].font = Font(name='Arial', italic=True, size=11, color='334155')
 ws["A2"].fill = fill("E2E8F0"); ws["A2"].alignment = ctr()
 ws.row_dimensions[2].height = 20
 
-hdrs   = ["👤 Nom","🍸 Aperitif chez","🍽️ Diner chez","🚶 Maison→Apero","🚶 Apero→Diner","🚶 Diner→Dessert","📊 Total marche"]
+hdrs   = ["👤 Nom","🍸 Aperitif chez","🍽️ Diner chez","🚶 Maison→Apero (min)","🚶 Apero→Diner (min)","🚶 Diner→Dessert (min)","📊 Total marche (min)"]
 colors = ["1D4ED8","1D4ED8","C2410C","059669","059669","7C3AED","B91C1C"]
 widths = [34,34,34,18,18,20,17]
 ws.row_dimensions[3].height = 26
@@ -151,8 +151,7 @@ drinks_groups = defaultdict(list)
 for r in rows:
     host = r['drinks_host']
     drinks_groups.setdefault(host, [])
-    if r['name'] != host:
-        drinks_groups[host].append(r)
+    drinks_groups[host].append(r)
 
 row=2
 for host,guests in drinks_groups.items():
@@ -163,13 +162,13 @@ for host,guests in drinks_groups.items():
     ws2[f"A{row}"].font=Font(name='Arial',bold=True,size=11,color='FFFFFF')
     ws2[f"A{row}"].fill=fill("0D47A1"); ws2[f"A{row}"].alignment=lft(); row+=1
     ws2.row_dimensions[row].height=20
-    for ci,h in enumerate(["👥 Invite","🚶 Maison → ici (min)","🍽️ Diner chez"],1):
+    for ci,h in enumerate(["👥 Participant","🚶 Maison → ici (min)","🍽️ Diner chez"],1):
         c=ws2.cell(row=row,column=ci,value=h)
         c.font=hfont(size=9); c.fill=fill("42A5F5"); c.alignment=ctr(); c.border=bd()
     row+=1
     if not guests:
         ws2.row_dimensions[row].height=18
-        for ci,v in enumerate(["(aucun invite externe)","",""],1):
+        for ci,v in enumerate(["(aucun participant)","",""],1):
             c=ws2.cell(row=row,column=ci,value=v)
             c.fill=fill("E3F2FD"); c.font=cfont(bold=(ci==1))
             c.alignment=lft() if ci==1 else ctr(); c.border=bd()
@@ -188,36 +187,35 @@ for host,guests in drinks_groups.items():
 # ═══ SHEET 3 — Diner ═════════════════════════════════════════════════════════
 ws3=wb.create_sheet("Diner")
 ws3.sheet_view.showGridLines=False
-ws3.merge_cells("A1:B1")
+ws3.merge_cells("A1:C1")
 ws3["A1"]="🍽️ DINER — Repartition par hote"
 ws3["A1"].font=Font(name='Arial',bold=True,size=14,color='FFFFFF')
 ws3["A1"].fill=fill("E65100"); ws3["A1"].alignment=ctr()
 ws3.row_dimensions[1].height=30
-for col,w in zip([1,2],[34,20]): cw(ws3,col,w)
+for col,w in zip([1,2,3],[32,22,30]): cw(ws3,col,w)
 
 dinner_groups = defaultdict(list)
 for r in rows:
     host = r['dinner_host']
     dinner_groups.setdefault(host, [])
-    if r['name'] != host:
-        dinner_groups[host].append(r)
+    dinner_groups[host].append(r)
 
 row=2
 for host,guests in dinner_groups.items():
     host_addr=addr_map.get(host,'')
     ws3.row_dimensions[row].height=26
-    ws3.merge_cells(f"A{row}:B{row}")
+    ws3.merge_cells(f"A{row}:C{row}")
     ws3[f"A{row}"]=f"Chez {host}  —  {host_addr}"
     ws3[f"A{row}"].font=Font(name='Arial',bold=True,size=11,color='FFFFFF')
     ws3[f"A{row}"].fill=fill("BF360C"); ws3[f"A{row}"].alignment=lft(); row+=1
     ws3.row_dimensions[row].height=20
-    for ci,h in enumerate(["👥 Invite","🚶 Apero → ici (min)"],1):
+    for ci,h in enumerate(["👥 Participant","🚶 Apero → ici (min)","🍸 Apero chez"],1):
         c=ws3.cell(row=row,column=ci,value=h)
         c.font=hfont(size=9); c.fill=fill("FF7043"); c.alignment=ctr(); c.border=bd()
     row+=1
     if not guests:
         ws3.row_dimensions[row].height=18
-        for ci,v in enumerate(["(aucun invite externe)",""],1):
+        for ci,v in enumerate(["(aucun participant)","",""],1):
             c=ws3.cell(row=row,column=ci,value=v)
             c.fill=fill("FFF3E0"); c.font=cfont(bold=(ci==1))
             c.alignment=lft() if ci==1 else ctr(); c.border=bd()
@@ -225,10 +223,10 @@ for host,guests in dinner_groups.items():
     else:
         for g in guests:
             ws3.row_dimensions[row].height=18
-            for ci,v in enumerate([g['name'],g['w2']],1):
+            for ci,v in enumerate([g['name'],g['w2'],g['drinks_host']],1):
                 c=ws3.cell(row=row,column=ci,value=v)
                 c.fill=fill("FFF3E0")
-                c.font=cfont(bold=(ci==1)); c.alignment=lft() if ci==1 else ctr(); c.border=bd()
+                c.font=cfont(bold=(ci==1)); c.alignment=lft() if ci in (1,3) else ctr(); c.border=bd()
                 if ci==2: c.number_format='0.0'
             row+=1
     row+=1
