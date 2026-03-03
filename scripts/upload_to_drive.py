@@ -80,7 +80,8 @@ def main():
     client_secret_path = cfg.get("client_secret_path", "credentials/client_secret.json")
     token_path = cfg.get("token_path", "credentials/token.json")
     fid=cfg.get("folder_id","")
-    fn=cfg.get("filename",os.path.basename(fp))
+    # Use the local output filename (timestamped) on Drive too.
+    fn=os.path.basename(fp)
     if not fid: print("Error: folder_id not set in config.yaml"); sys.exit(1)
 
     creds = load_oauth_credentials(client_secret_path, token_path)
@@ -106,41 +107,22 @@ def main():
         print("Drive network error: " + str(e))
         print("Hint: check internet/DNS connectivity and retry.")
         sys.exit(1)
+    except Exception as e:
+        print("Drive network error: " + str(e))
+        print("Hint: check internet/DNS connectivity and retry.")
+        sys.exit(1)
 
-    safe_name = fn.replace("'", "\\'")
-    q="name='%s' and '%s' in parents and trashed=false" % (safe_name,fid)
-    list_args = {
-        "q": q,
-        "fields": "files(id)",
-        "supportsAllDrives": True,
-        "includeItemsFromAllDrives": True,
-    }
-    if shared_drive_id:
-        list_args["corpora"] = "drive"
-        list_args["driveId"] = shared_drive_id
-    else:
-        list_args["corpora"] = "allDrives"
-
-    ex=svc.files().list(**list_args).execute().get("files",[])
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     media=MediaFileUpload(fp,mimetype=mime,resumable=True)
     try:
-        if ex:
-            svc.files().update(
-                fileId=ex[0]["id"],
-                media_body=media,
-                supportsAllDrives=True
-            ).execute()
-            print("Updated on Drive: "+fn)
-        else:
-            r=svc.files().create(
-                body={"name":fn,"parents":[fid]},
-                media_body=media,
-                fields="id,webViewLink",
-                supportsAllDrives=True
-            ).execute()
-            print("Uploaded to Drive: "+fn)
-            print("Link: "+r.get("webViewLink",""))
+        r=svc.files().create(
+            body={"name":fn,"parents":[fid]},
+            media_body=media,
+            fields="id,webViewLink",
+            supportsAllDrives=True
+        ).execute()
+        print("Uploaded to Drive: "+fn)
+        print("Link: "+r.get("webViewLink",""))
     except HttpError as e:
         reason, message = parse_http_error(e)
         print("Drive API error: " + str(e))
@@ -150,6 +132,10 @@ def main():
             print("Details: " + message)
         sys.exit(1)
     except google_auth_exceptions.TransportError as e:
+        print("Drive network error: " + str(e))
+        print("Hint: check internet/DNS connectivity and retry.")
+        sys.exit(1)
+    except Exception as e:
         print("Drive network error: " + str(e))
         print("Hint: check internet/DNS connectivity and retry.")
         sys.exit(1)

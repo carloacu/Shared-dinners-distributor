@@ -27,8 +27,6 @@ pub struct GoogleDriveConfig {
     pub token_path: String,
     #[serde(default)]
     pub folder_id: String,
-    #[serde(default = "default_filename")]
-    pub filename: String,
 }
 
 fn default_client_secret_path() -> String {
@@ -37,10 +35,6 @@ fn default_client_secret_path() -> String {
 
 fn default_token_path() -> String {
     "credentials/token.json".to_string()
-}
-
-fn default_filename() -> String {
-    "progressive_dinner_result.xlsx".to_string()
 }
 
 #[derive(Debug, Deserialize, Clone)]

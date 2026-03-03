@@ -22,6 +22,9 @@ Ce script fait tout :
 
     cargo run --release
 
+Les fichiers de sortie sont timestampes et non ecrases :
+`data/output/result_YYYYMMDD_HHMMSS.{txt,csv,xlsx}`.
+
 ---
 
 ## Structure
@@ -69,7 +72,6 @@ Ce script fait tout :
       client_secret_path: "credentials/client_secret.json"
       token_path: "credentials/token.json"
       folder_id: ""
-      filename: "progressive_dinner_result.xlsx"
 
 ---
 
@@ -95,6 +97,7 @@ Ce script fait tout :
 
 **6.** Au premier lancement, un lien d'autorisation OAuth est affiche. Connecte-toi puis valide.
 Le token est sauvegarde dans `credentials/token.json`.
+Le nom du fichier uploade reprend le nom local timestampe.
 
 ---
 

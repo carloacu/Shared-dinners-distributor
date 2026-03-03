@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate a formatted Excel report from data/output/result.csv"""
+"""Generate a formatted Excel report from CSV input to XLSX output."""
 
 import sys, os
 
@@ -32,7 +32,8 @@ def lft(): return Alignment(horizontal='left', vertical='center', wrap_text=True
 def cw(ws, col, w): ws.column_dimensions[get_column_letter(col)].width = w
 
 # ── read inputs ───────────────────────────────────────────────────────────────
-csv_path = 'data/output/result.csv'
+csv_path = sys.argv[1] if len(sys.argv) >= 2 else 'data/output/result.csv'
+out = sys.argv[2] if len(sys.argv) >= 3 else 'data/output/result.xlsx'
 cfg_path = 'data/input/config.yaml'
 
 if not os.path.exists(csv_path):
@@ -295,7 +296,8 @@ for ri,(a,b,c) in enumerate(stats,2):
             cell.font=cfont(bold=(ci==1),size=10)
             cell.fill=fill("F5F5F5" if ri%2==0 else "FFFFFF"); cell.alignment=lft() if ci==1 else ctr()
 
-out="data/output/result.xlsx"
-os.makedirs("data/output", exist_ok=True)
+out_dir = os.path.dirname(out)
+if out_dir:
+    os.makedirs(out_dir, exist_ok=True)
 wb.save(out)
 print(f"Excel saved: {out}")

@@ -5,6 +5,7 @@ mod solver;
 mod output;
 
 use anyhow::Result;
+use chrono::Local;
 use log::info;
 
 fn main() -> Result<()> {
@@ -66,9 +67,16 @@ fn main() -> Result<()> {
     info!("Best score after SA: {:.4}", best_score);
 
     // 6. Write output
+    let run_ts = Local::now().format("%Y%m%d_%H%M%S").to_string();
+    let txt_output = format!("data/output/result_{}.txt", run_ts);
+    let csv_output = format!("data/output/result_{}.csv", run_ts);
+    let xlsx_output = format!("data/output/result_{}.xlsx", run_ts);
+
     info!("Writing output...");
-    output::write_result(&best, &people, &dessert_addr, &travel, &cfg, "data/output/result.txt")?;
-    output::write_result_csv(&best, &people, "data/output/result.csv")?;
+    output::write_result(&best, &people, &dessert_addr, &travel, &cfg, &txt_output)?;
+    output::write_result_csv(&best, &people, &csv_output)?;
+    info!("Text report: {}", txt_output);
+    info!("CSV report: {}", csv_output);
 
     // Use venv Python if available, otherwise fall back to system python3
     let python = if std::path::Path::new(".venv/bin/python3").exists() {
@@ -81,9 +89,11 @@ fn main() -> Result<()> {
     info!("Generating Excel report...");
     let xlsx_status = std::process::Command::new(python)
         .arg("scripts/make_xlsx.py")
+        .arg(&csv_output)
+        .arg(&xlsx_output)
         .status();
     match xlsx_status {
-        Ok(s) if s.success() => info!("Excel report generated: data/output/result.xlsx"),
+        Ok(s) if s.success() => info!("Excel report generated: {}", xlsx_output),
         Ok(s) => log::warn!("Excel generation exited with status: {}", s),
         Err(e) => log::warn!("Failed to run Excel script: {}", e),
     }
@@ -93,7 +103,7 @@ fn main() -> Result<()> {
         info!("Uploading to Google Drive...");
         let status = std::process::Command::new(python)
             .arg("scripts/upload_to_drive.py")
-            .arg("data/output/result.xlsx")
+            .arg(&xlsx_output)
             .status();
         match status {
             Ok(s) if s.success() => info!("Upload to Google Drive successful!"),
