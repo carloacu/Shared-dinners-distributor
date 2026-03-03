@@ -3,7 +3,12 @@ import os
 import sys
 
 missing = []
-for pkg, imp in [("google-api-python-client","googleapiclient"),("google-auth","google.oauth2"),("pyyaml","yaml")]:
+for pkg, imp in [
+    ("google-api-python-client", "googleapiclient"),
+    ("google-auth", "google.oauth2"),
+    ("google-auth-oauthlib", "google_auth_oauthlib"),
+    ("pyyaml", "yaml"),
+]:
     try: __import__(imp)
     except ImportError: missing.append(pkg)
 if missing:
@@ -11,13 +16,16 @@ if missing:
     print("Fix: pip install " + " ".join(missing))
     sys.exit(1)
 import yaml
-from google.oauth2 import service_account
+from google.oauth2 import service_account, credentials as user_credentials
 from google.auth import exceptions as google_auth_exceptions
+from google.auth.transport.requests import Request
+from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from googleapiclient.errors import HttpError
 
 EXIT_SKIPPED = 2
+SCOPES = ["https://www.googleapis.com/auth/drive"]
 
 
 def parse_http_error(err):
@@ -37,21 +45,60 @@ def parse_http_error(err):
     return reason, message
 
 
+def load_oauth_credentials(client_secret_path, token_path):
+    creds = None
+    if os.path.exists(token_path):
+        creds = user_credentials.Credentials.from_authorized_user_file(token_path, SCOPES)
+
+    if creds and creds.valid:
+        return creds
+
+    if creds and creds.expired and creds.refresh_token:
+        creds.refresh(Request())
+    else:
+        if not os.path.exists(client_secret_path):
+            print("Error: " + client_secret_path + " not found")
+            sys.exit(1)
+        flow = InstalledAppFlow.from_client_secrets_file(client_secret_path, SCOPES)
+        try:
+            creds = flow.run_local_server(port=0, open_browser=False)
+        except Exception:
+            creds = flow.run_console()
+
+    token_dir = os.path.dirname(token_path)
+    if token_dir:
+        os.makedirs(token_dir, exist_ok=True)
+    with open(token_path, "w") as token_file:
+        token_file.write(creds.to_json())
+    return creds
+
+
 def main():
     if len(sys.argv)<2: print("Usage: upload_to_drive.py FILE"); sys.exit(1)
     fp=sys.argv[1]
     if not os.path.exists(fp): print("Error: "+fp+" not found"); sys.exit(1)
     cfg=yaml.safe_load(open("data/input/config.yaml")).get("google_drive", {})
+    auth_method = cfg.get("auth_method", "").strip().lower()
+    if not auth_method:
+        auth_method = "oauth" if cfg.get("client_secret_path") else "service_account"
+
     sa=cfg.get("service_account_path","credentials/service_account.json")
+    client_secret_path = cfg.get("client_secret_path", "credentials/client_secret.json")
+    token_path = cfg.get("token_path", "credentials/token.json")
     fid=cfg.get("folder_id","")
     fn=cfg.get("filename",os.path.basename(fp))
     impersonate_user = cfg.get("impersonate_user", "").strip()
     shared_drive_id = cfg.get("shared_drive_id", "").strip()
-    if not os.path.exists(sa): print("Error: "+sa+" not found"); sys.exit(1)
     if not fid: print("Error: folder_id not set in config.yaml"); sys.exit(1)
-    creds=service_account.Credentials.from_service_account_file(sa,scopes=["https://www.googleapis.com/auth/drive"])
-    if impersonate_user:
-        creds = creds.with_subject(impersonate_user)
+
+    if auth_method == "oauth":
+        creds = load_oauth_credentials(client_secret_path, token_path)
+    else:
+        if not os.path.exists(sa): print("Error: "+sa+" not found"); sys.exit(1)
+        creds=service_account.Credentials.from_service_account_file(sa,scopes=SCOPES)
+        if impersonate_user:
+            creds = creds.with_subject(impersonate_user)
+
     svc=build("drive","v3",credentials=creds)
 
     # Resolve the parent folder to detect whether it is in a Shared Drive.
@@ -77,7 +124,7 @@ def main():
         sys.exit(1)
 
     # Service accounts cannot upload into personal "My Drive" folders.
-    if not shared_drive_id and not impersonate_user:
+    if auth_method == "service_account" and not shared_drive_id and not impersonate_user:
         print(
             "Upload skipped: folder_id is in 'My Drive' and service accounts have no storage quota."
         )
@@ -125,7 +172,7 @@ def main():
     except HttpError as e:
         reason, message = parse_http_error(e)
         print("Drive API error: " + str(e))
-        if reason == "storageQuotaExceeded":
+        if reason == "storageQuotaExceeded" and auth_method == "service_account":
             print(
                 "Hint: service accounts cannot upload to 'My Drive'. "
                 "Use a Shared Drive folder (set google_drive.shared_drive_id optionally) "

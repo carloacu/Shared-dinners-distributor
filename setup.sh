@@ -35,8 +35,8 @@ fi
 
 step "Python dependencies"
 .venv/bin/pip install --quiet --upgrade pip
-.venv/bin/pip install --quiet google-api-python-client google-auth pyyaml openpyxl
-ok "google-api-python-client, google-auth, pyyaml openpyxl installed"
+.venv/bin/pip install --quiet google-api-python-client google-auth google-auth-oauthlib pyyaml openpyxl
+ok "google-api-python-client, google-auth, google-auth-oauthlib, pyyaml, openpyxl installed"
 
 step "Directories"
 mkdir -p data/input data/cache data/output credentials
@@ -63,7 +63,8 @@ echo ""
 echo "To run:  cargo run --release"
 echo ""
 echo "Optional Google Drive setup:"
-echo "  1. Place service_account.json in credentials/"
+echo "  1. Place OAuth client_secret.json in credentials/"
 echo "  2. Set google_drive.enabled: true in config.yaml"
-echo "  3. Set google_drive.folder_id in config.yaml"
+echo "  3. Set google_drive.auth_method: oauth"
+echo "  4. Set google_drive.folder_id in config.yaml"
 echo ""

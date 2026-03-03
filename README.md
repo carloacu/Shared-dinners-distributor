@@ -11,7 +11,7 @@ Programme Rust - diner progressif via recuit simule.
 Ce script fait tout :
 - Verifie/installe Rust
 - Cree `.venv/` sans toucher au Python systeme
-- Installe google-api-python-client, google-auth, pyyaml
+- Installe google-api-python-client, google-auth, google-auth-oauthlib, pyyaml
 - Cree data/ et credentials/
 - Met a jour .gitignore
 - Compile Rust en mode release
@@ -33,7 +33,8 @@ Ce script fait tout :
     |-- scripts/
     |   +-- upload_to_drive.py    <- Google Drive (optionnel)
     |-- credentials/              <- ignore par git
-    |   +-- service_account.json
+    |   +-- client_secret.json
+    |   +-- token.json            <- auto-genere au 1er login OAuth
     +-- data/
         |-- input/
         |   |-- people.csv
@@ -65,6 +66,9 @@ Ce script fait tout :
       max_iterations: 50000
     google_drive:
       enabled: false
+      auth_method: "oauth"   # "oauth" (recommande) ou "service_account"
+      client_secret_path: "credentials/client_secret.json"
+      token_path: "credentials/token.json"
       service_account_path: "credentials/service_account.json"
       folder_id: ""
       filename: "progressive_dinner_result.xlsx"
@@ -73,32 +77,31 @@ Ce script fait tout :
 
 ---
 
-## Google Drive (optionnel)
+## Google Drive (optionnel, OAuth recommande)
 
 **1.** [console.cloud.google.com](https://console.cloud.google.com) -> Nouveau projet
 
 **2.** APIs and Services -> Activer -> Google Drive API
 
-**3.** Identifiants -> Compte de service -> Cles -> JSON -> telecharge 
+**3.** Identifiants -> ID client OAuth (type Desktop App) -> telecharge JSON
 
 **4.**
 
-    mv ~/Downloads/*.json credentials/service_account.json
+    mv ~/Downloads/*.json credentials/client_secret.json
 
-**5.** Partager le dossier Drive avec l'email du service account (champ `client_email` du JSON), role **Editeur**.
-
-**6.** Dans `data/input/config.yaml` :
+**5.** Dans `data/input/config.yaml` :
 
     google_drive:
       enabled: true
+      auth_method: "oauth"
+      client_secret_path: "credentials/client_secret.json"
+      token_path: "credentials/token.json"
       folder_id: "ID_APRES_/folders/_DANS_L_URL"
-      # Option A (recommandee): dossier dans un Shared Drive
-      shared_drive_id: "ID_DU_SHARED_DRIVE"
-      # Option B: impersonation utilisateur (Google Workspace + delegation)
-      impersonate_user: ""
 
-**7.** Si vous voyez `storageQuotaExceeded`: le dossier cible est probablement dans "Mon Drive".
-Avec un service account, utilisez plutot un dossier de Shared Drive ou l'impersonation.
+**6.** Au premier lancement, un lien d'autorisation OAuth est affiche. Connecte-toi puis valide.
+Le token est sauvegarde dans `credentials/token.json`.
+
+**7.** Mode service account toujours possible, mais limite sur "My Drive" (quota).
 
 ---
 
