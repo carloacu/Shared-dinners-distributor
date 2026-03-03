@@ -25,26 +25,14 @@ fn main() -> Result<()> {
         ids.len()
     });
 
-    // 3. Geocode all addresses (with cache)
-    info!("Geocoding addresses...");
-    let mut geo_cache = geo::GeoCache::load("data/cache/geocode_cache.json")?;
-    let coords = geo::geocode_all(&people, &cfg, &mut geo_cache)?;
-    geo_cache.save("data/cache/geocode_cache.json")?;
-
-    // Geocode dessert location
-    let dessert_addr = format!(
-        "{} {} {}",
-        cfg.dessert_address, cfg.dessert_postal_code, cfg.dessert_city
-    );
-    let dessert_coords = geo_cache.get_or_fetch(&dessert_addr, &cfg)?;
-
-    // 4. Compute travel times between all relevant pairs (with cache)
+    // 3. Compute travel times directly from addresses (with cache)
     info!("Computing travel times...");
+    let dessert_addr = cfg.dessert_full_address();
     let mut dist_cache = geo::DistCache::load("data/cache/distance_cache.json")?;
-    let travel = geo::compute_all_travel_times(&people, &coords, &dessert_coords, &cfg, &mut dist_cache)?;
+    let travel = geo::compute_all_travel_times(&people, &dessert_addr, &cfg, &mut dist_cache)?;
     dist_cache.save("data/cache/distance_cache.json")?;
 
-    // 5. Find initial valid solution
+    // 4. Find initial valid solution
     info!("Finding initial valid solution...");
     let hosts_drinks: Vec<usize> = people
         .iter()
@@ -71,15 +59,15 @@ fn main() -> Result<()> {
     let initial_score = solver::evaluate(&initial, &people, &travel, &cfg);
     info!("Initial score: {:.4}", initial_score);
 
-    // 6. Simulated annealing optimization
+    // 5. Simulated annealing optimization
     info!("Starting simulated annealing...");
     let best = solver::simulated_annealing(initial, &people, &hosts_drinks, &hosts_dinner, &travel, &cfg)?;
     let best_score = solver::evaluate(&best, &people, &travel, &cfg);
     info!("Best score after SA: {:.4}", best_score);
 
-    // 7. Write output
+    // 6. Write output
     info!("Writing output...");
-    output::write_result(&best, &people, &coords, &dessert_coords, &travel, &cfg, "data/output/result.txt")?;
+    output::write_result(&best, &people, &dessert_addr, &travel, &cfg, "data/output/result.txt")?;
     output::write_result_csv(&best, &people, "data/output/result.csv")?;
 
     info!("Done! Results written to data/output/");
