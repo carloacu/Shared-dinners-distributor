@@ -18,6 +18,10 @@ struct CsvRow {
     number_max_recieving_for_drinks: usize,
     recieving_for_dinner: String,
     number_max_recieving_for_dinner: usize,
+    #[serde(default)]
+    need_pmr: String,
+    #[serde(default)]
+    can_host_pmr: String,
 }
 
 /// A person (one row in the CSV)
@@ -34,6 +38,8 @@ pub struct Person {
     pub max_guests_drinks: usize,
     pub receiving_for_dinner: bool,
     pub max_guests_dinner: usize,
+    pub need_pmr: bool,
+    pub can_host_pmr: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,6 +66,10 @@ impl Person {
     }
 }
 
+fn parse_yes_no(value: &str) -> bool {
+    matches!(value.trim().to_lowercase().as_str(), "yes" | "y" | "true" | "1")
+}
+
 pub fn load_people(path: &str) -> Result<Vec<Person>> {
     let mut rdr = csv::Reader::from_path(path)?;
     let mut rows: Vec<CsvRow> = Vec::new();
@@ -79,10 +89,12 @@ pub fn load_people(path: &str) -> Result<Vec<Person>> {
             gender: Gender::from_csv(&row.gender),
             year_of_birth: row.year_of_birth,
             address,
-            receiving_for_drinks: row.recieving_for_drinks.trim().to_lowercase() == "yes",
+            receiving_for_drinks: parse_yes_no(&row.recieving_for_drinks),
             max_guests_drinks: row.number_max_recieving_for_drinks,
-            receiving_for_dinner: row.recieving_for_dinner.trim().to_lowercase() == "yes",
+            receiving_for_dinner: parse_yes_no(&row.recieving_for_dinner),
             max_guests_dinner: row.number_max_recieving_for_dinner,
+            need_pmr: parse_yes_no(&row.need_pmr),
+            can_host_pmr: parse_yes_no(&row.can_host_pmr),
         });
     }
     Ok(people)

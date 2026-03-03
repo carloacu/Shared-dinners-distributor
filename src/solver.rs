@@ -40,7 +40,19 @@ pub fn is_valid(sol: &Solution, people: &[Person], cfg: &Config) -> bool {
         }
     }
 
-    // 3. Same group ID → same drinks host AND same dinner host
+    // 3. PMR accessibility: if a person needs PMR, both assigned hosts must be PMR-accessible
+    for i in 0..n {
+        if people[i].need_pmr {
+            if !people[sol.drinks_host[i]].can_host_pmr {
+                return false;
+            }
+            if !people[sol.dinner_host[i]].can_host_pmr {
+                return false;
+            }
+        }
+    }
+
+    // 4. Same group ID → same drinks host AND same dinner host
     for i in 0..n {
         for j in (i + 1)..n {
             if people[i].group_id == people[j].group_id {
@@ -54,7 +66,7 @@ pub fn is_valid(sol: &Solution, people: &[Person], cfg: &Config) -> bool {
         }
     }
 
-    // 4. Capacity constraints: count guests per host
+    // 5. Capacity constraints: count guests per host
     // For drinks
     let mut drinks_count: HashMap<usize, usize> = HashMap::new();
     for i in 0..n {
@@ -206,6 +218,24 @@ pub fn find_initial_solution(
     }
     if hosts_dinner.is_empty() {
         return Err(anyhow!("No dinner hosts found"));
+    }
+
+    // Fast feasibility check for PMR constraints.
+    if people.iter().any(|p| p.need_pmr) {
+        let has_pmr_drinks_host = hosts_drinks.iter().any(|&h| people[h].can_host_pmr);
+        let has_pmr_dinner_host = hosts_dinner.iter().any(|&h| people[h].can_host_pmr);
+        if !has_pmr_drinks_host || !has_pmr_dinner_host {
+            return Err(anyhow!(
+                "PMR constraint infeasible: at least one person needs PMR, but there is no PMR-accessible host for {}",
+                if !has_pmr_drinks_host && !has_pmr_dinner_host {
+                    "drinks and dinner"
+                } else if !has_pmr_drinks_host {
+                    "drinks"
+                } else {
+                    "dinner"
+                }
+            ));
+        }
     }
 
     let mut drinks_host = vec![0usize; n];
