@@ -40,7 +40,25 @@ pub fn is_valid(sol: &Solution, people: &[Person], cfg: &Config) -> bool {
         }
     }
 
-    // 3. PMR accessibility: if a person needs PMR, both assigned hosts must be PMR-accessible
+    // 3. If a host is actually used as venue, they must also be assigned there.
+    // This avoids "host not present in own participant list" in outputs,
+    // while still allowing optional hosts to not be selected at all.
+    for i in 0..n {
+        if people[i].receiving_for_drinks {
+            let host_used = sol.drinks_host.iter().any(|&h| h == i);
+            if host_used && sol.drinks_host[i] != i {
+                return false;
+            }
+        }
+        if people[i].receiving_for_dinner {
+            let host_used = sol.dinner_host.iter().any(|&h| h == i);
+            if host_used && sol.dinner_host[i] != i {
+                return false;
+            }
+        }
+    }
+
+    // 4. PMR accessibility: if a person needs PMR, both assigned hosts must be PMR-accessible
     for i in 0..n {
         if people[i].need_pmr {
             if !people[sol.drinks_host[i]].can_host_pmr {
@@ -52,7 +70,7 @@ pub fn is_valid(sol: &Solution, people: &[Person], cfg: &Config) -> bool {
         }
     }
 
-    // 4. Same group ID → same drinks host AND same dinner host
+    // 5. Same group ID → same drinks host AND same dinner host
     for i in 0..n {
         for j in (i + 1)..n {
             if people[i].group_id == people[j].group_id {
@@ -66,7 +84,7 @@ pub fn is_valid(sol: &Solution, people: &[Person], cfg: &Config) -> bool {
         }
     }
 
-    // 5. Capacity constraints: count guests per host
+    // 6. Capacity constraints: count guests per host
     // For drinks
     let mut drinks_count: HashMap<usize, usize> = HashMap::new();
     for i in 0..n {
@@ -289,6 +307,20 @@ fn systematic_initial(
         .iter()
         .map(|members| members.iter().any(|&i| people[i].need_pmr))
         .collect();
+    let mut group_idx_by_person = vec![usize::MAX; n];
+    for (gi, members) in group_members_list.iter().enumerate() {
+        for &member in members {
+            group_idx_by_person[member] = gi;
+        }
+    }
+    let drinks_owner_group: Vec<usize> = hosts_drinks
+        .iter()
+        .map(|&host_person| group_idx_by_person[host_person])
+        .collect();
+    let dinner_owner_group: Vec<usize> = hosts_dinner
+        .iter()
+        .map(|&host_person| group_idx_by_person[host_person])
+        .collect();
 
     let drinks_caps: Vec<usize> = hosts_drinks
         .iter()
@@ -301,6 +333,7 @@ fn systematic_initial(
         hosts_drinks,
         &drinks_caps,
         &drinks_can_pmr,
+        &drinks_owner_group,
         cfg.min_guests_for_drinks,
     )
     .ok_or_else(|| anyhow!("Cannot find valid drinks assignment with current min/max and PMR constraints"))?;
@@ -316,6 +349,7 @@ fn systematic_initial(
         hosts_dinner,
         &dinner_caps,
         &dinner_can_pmr,
+        &dinner_owner_group,
         cfg.min_guests_for_dinner,
     )
     .ok_or_else(|| anyhow!("Cannot find valid dinner assignment with current min/max and PMR constraints"))?;
@@ -342,6 +376,7 @@ fn assign_groups_to_hosts(
     hosts: &[usize],
     host_caps: &[usize],
     host_can_pmr: &[bool],
+    host_owner_group: &[usize],
     min_guests: usize,
 ) -> Option<Vec<usize>> {
     if group_sizes.is_empty() {
@@ -355,8 +390,15 @@ fn assign_groups_to_hosts(
     }
 
     let mut order: Vec<usize> = (0..group_sizes.len()).collect();
+    let mut is_owner_group = vec![false; group_sizes.len()];
+    for &owner_group in host_owner_group {
+        if owner_group < is_owner_group.len() {
+            is_owner_group[owner_group] = true;
+        }
+    }
     order.sort_by_key(|&gi| {
         (
+            std::cmp::Reverse(is_owner_group[gi] as u8),
             std::cmp::Reverse(group_need_pmr[gi] as u8),
             std::cmp::Reverse(group_sizes[gi]),
         )
@@ -364,6 +406,7 @@ fn assign_groups_to_hosts(
 
     let mut counts = vec![0usize; hosts.len()];
     let mut assigned_host_slot = vec![usize::MAX; order.len()];
+    let mut assigned_group_slot = vec![usize::MAX; group_sizes.len()];
     let remaining_people = total_people;
     let remaining_pmr_people: usize = order
         .iter()
@@ -378,9 +421,11 @@ fn assign_groups_to_hosts(
         group_need_pmr,
         host_caps,
         host_can_pmr,
+        host_owner_group,
         min_guests,
         &mut counts,
         &mut assigned_host_slot,
+        &mut assigned_group_slot,
         remaining_people,
         remaining_pmr_people,
     ) {
@@ -401,9 +446,11 @@ fn backtrack_assign_groups(
     group_need_pmr: &[bool],
     host_caps: &[usize],
     host_can_pmr: &[bool],
+    host_owner_group: &[usize],
     min_guests: usize,
     counts: &mut [usize],
     assigned_host_slot: &mut [usize],
+    assigned_group_slot: &mut [usize],
     remaining_people: usize,
     remaining_pmr_people: usize,
 ) -> bool {
@@ -416,6 +463,12 @@ fn backtrack_assign_groups(
     let need_pmr = group_need_pmr[gi];
 
     for host_slot in 0..host_caps.len() {
+        let owner_group = host_owner_group[host_slot];
+        // A host slot can be used by others only if its owner group is assigned to it.
+        // Owner groups are assigned first in `order`.
+        if owner_group != gi && assigned_group_slot[owner_group] != host_slot {
+            continue;
+        }
         if need_pmr && !host_can_pmr[host_slot] {
             continue;
         }
@@ -425,6 +478,7 @@ fn backtrack_assign_groups(
 
         counts[host_slot] += gsize;
         assigned_host_slot[pos] = host_slot;
+        assigned_group_slot[gi] = host_slot;
 
         let next_remaining_people = remaining_people - gsize;
         let next_remaining_pmr_people = if need_pmr {
@@ -463,9 +517,11 @@ fn backtrack_assign_groups(
                 group_need_pmr,
                 host_caps,
                 host_can_pmr,
+                host_owner_group,
                 min_guests,
                 counts,
                 assigned_host_slot,
+                assigned_group_slot,
                 next_remaining_people,
                 next_remaining_pmr_people,
             )
@@ -474,6 +530,7 @@ fn backtrack_assign_groups(
         }
 
         counts[host_slot] -= gsize;
+        assigned_group_slot[gi] = usize::MAX;
     }
 
     assigned_host_slot[pos] = usize::MAX;
