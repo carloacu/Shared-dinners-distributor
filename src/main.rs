@@ -70,6 +70,20 @@ fn main() -> Result<()> {
     output::write_result(&best, &people, &dessert_addr, &travel, &cfg, "data/output/result.txt")?;
     output::write_result_csv(&best, &people, "data/output/result.csv")?;
 
+    // 7. Upload to Google Drive if enabled
+    if cfg.google_drive.enabled {
+        info!("Uploading to Google Drive...");
+        let status = std::process::Command::new("python3")
+            .arg("scripts/upload_to_drive.py")
+            .arg("data/output/result.xlsx")
+            .status();
+        match status {
+            Ok(s) if s.success() => info!("Upload to Google Drive successful!"),
+            Ok(s) => log::warn!("Upload script exited with status: {}", s),
+            Err(e) => log::warn!("Failed to run upload script: {}", e),
+        }
+    }
+
     info!("Done! Results written to data/output/");
     Ok(())
 }

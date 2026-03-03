@@ -7,14 +7,33 @@ pub struct Config {
     pub dessert_address: String,
     pub dessert_postal_code: String,
     pub dessert_city: String,
-
     pub min_guests_for_drinks: usize,
     pub min_guests_for_dinner: usize,
-
     pub ors_api_key: String,
-
     pub weights: Weights,
     pub simulated_annealing: SAParams,
+    #[serde(default)]
+    pub google_drive: GoogleDriveConfig,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct GoogleDriveConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_sa_path")]
+    pub service_account_path: String,
+    #[serde(default)]
+    pub folder_id: String,
+    #[serde(default = "default_filename")]
+    pub filename: String,
+}
+
+fn default_sa_path() -> String {
+    "credentials/service_account.json".to_string()
+}
+
+fn default_filename() -> String {
+    "progressive_dinner_result.xlsx".to_string()
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -43,9 +62,6 @@ impl Config {
     }
 
     pub fn dessert_full_address(&self) -> String {
-        format!(
-            "{} {} {}",
-            self.dessert_address, self.dessert_postal_code, self.dessert_city
-        )
+        format!("{} {} {}", self.dessert_address, self.dessert_postal_code, self.dessert_city)
     }
 }
