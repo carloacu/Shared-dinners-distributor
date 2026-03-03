@@ -49,6 +49,7 @@ Les fichiers de sortie sont timestampes et non ecrases :
 
 ## config.yaml
 
+    event_title: "Happy agape 2"   # titre du rapport Excel
     dessert_address: "20 rue de Paris"
     dessert_postal_code: "92130"
     dessert_city: "Issy-les-Moulineaux"

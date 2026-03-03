@@ -41,6 +41,7 @@ if not os.path.exists(csv_path):
 
 cfg = yaml.safe_load(open(cfg_path))
 dessert_addr = f"{cfg['dessert_address']} {cfg['dessert_postal_code']} {cfg['dessert_city']}"
+event_title = cfg.get('event_title', 'Happy agape 2')
 
 rows = []
 with open(csv_path) as f:
@@ -89,20 +90,20 @@ ws.sheet_view.showGridLines = False
 ws.freeze_panes = "A4"
 
 ws.merge_cells("A1:G1")
-ws["A1"] = "PROGRESSIVE DINNER — REPARTITION FINALE"
-ws["A1"].font = Font(name='Arial', bold=True, size=16, color='FFFFFF')
-ws["A1"].fill = fill("1A1A2E"); ws["A1"].alignment = ctr()
-ws.row_dimensions[1].height = 36
+ws["A1"] = f"🎉 {event_title.upper()} — REPARTITION FINALE"
+ws["A1"].font = Font(name='Arial', bold=True, size=17, color='FFFFFF')
+ws["A1"].fill = fill("0B132B"); ws["A1"].alignment = ctr()
+ws.row_dimensions[1].height = 40
 
 ws.merge_cells("A2:G2")
-ws["A2"] = f"Dessert : {dessert_addr}"
-ws["A2"].font = Font(name='Arial', italic=True, size=11, color='546E7A')
-ws["A2"].fill = fill("ECEFF1"); ws["A2"].alignment = ctr()
+ws["A2"] = f"🍰 Dessert : {dessert_addr}"
+ws["A2"].font = Font(name='Arial', italic=True, size=11, color='334155')
+ws["A2"].fill = fill("E2E8F0"); ws["A2"].alignment = ctr()
 ws.row_dimensions[2].height = 20
 
-hdrs   = ["Nom","Aperitif chez","Diner chez","Maison→Apero","Apero→Diner","Diner→Dessert","Total marche"]
-colors = ["1565C0","1565C0","E65100","388E3C","388E3C","7B1FA2","C62828"]
-widths = [28,28,28,17,17,19,16]
+hdrs   = ["👤 Nom","🍸 Aperitif chez","🍽️ Diner chez","🚶 Maison→Apero","🚶 Apero→Diner","🚶 Diner→Dessert","📊 Total marche"]
+colors = ["1D4ED8","1D4ED8","C2410C","059669","059669","7C3AED","B91C1C"]
+widths = [34,34,34,18,18,20,17]
 ws.row_dimensions[3].height = 26
 for ci,(h,c,w) in enumerate(zip(hdrs,colors,widths),1):
     cell = ws.cell(row=3,column=ci,value=h)
@@ -133,18 +134,18 @@ for ci in range(4,8):
     c.number_format='0.0'; c.alignment=ctr(); c.border=bd()
 
 ws.conditional_formatting.add(f"G4:G{len(rows)+3}",
-    DataBarRule(start_type='min',end_type='max',color="1565C0",showValue=True))
+    DataBarRule(start_type='min',end_type='max',color="0284C7",showValue=True))
 
 # ═══ SHEET 2 — Aperitif ══════════════════════════════════════════════════════
 from collections import defaultdict
 ws2 = wb.create_sheet("Aperitif")
 ws2.sheet_view.showGridLines = False
 ws2.merge_cells("A1:C1")
-ws2["A1"]="APERITIF — Repartition par hote"
+ws2["A1"]="🍸 APERITIF — Repartition par hote"
 ws2["A1"].font=Font(name='Arial',bold=True,size=14,color='FFFFFF')
 ws2["A1"].fill=fill("1565C0"); ws2["A1"].alignment=ctr()
 ws2.row_dimensions[1].height=30
-for col,w in zip([1,2,3],[28,18,26]): cw(ws2,col,w)
+for col,w in zip([1,2,3],[34,20,32]): cw(ws2,col,w)
 
 drinks_groups = defaultdict(list)
 for r in rows:
@@ -162,13 +163,13 @@ for host,guests in drinks_groups.items():
     ws2[f"A{row}"].font=Font(name='Arial',bold=True,size=11,color='FFFFFF')
     ws2[f"A{row}"].fill=fill("0D47A1"); ws2[f"A{row}"].alignment=lft(); row+=1
     ws2.row_dimensions[row].height=20
-    for ci,h in enumerate(["Invite","Maison → ici (min)","Diner chez"],1):
+    for ci,h in enumerate(["👥 Invite","🚶 Maison → ici (min)","🍽️ Diner chez"],1):
         c=ws2.cell(row=row,column=ci,value=h)
         c.font=hfont(size=9); c.fill=fill("42A5F5"); c.alignment=ctr(); c.border=bd()
     row+=1
     if not guests:
         ws2.row_dimensions[row].height=18
-        for ci,v in enumerate(["(aucun invite)","",""],1):
+        for ci,v in enumerate(["(aucun invite externe)","",""],1):
             c=ws2.cell(row=row,column=ci,value=v)
             c.fill=fill("E3F2FD"); c.font=cfont(bold=(ci==1))
             c.alignment=lft() if ci==1 else ctr(); c.border=bd()
@@ -187,12 +188,12 @@ for host,guests in drinks_groups.items():
 # ═══ SHEET 3 — Diner ═════════════════════════════════════════════════════════
 ws3=wb.create_sheet("Diner")
 ws3.sheet_view.showGridLines=False
-ws3.merge_cells("A1:C1")
-ws3["A1"]="DINER — Repartition par hote"
+ws3.merge_cells("A1:B1")
+ws3["A1"]="🍽️ DINER — Repartition par hote"
 ws3["A1"].font=Font(name='Arial',bold=True,size=14,color='FFFFFF')
 ws3["A1"].fill=fill("E65100"); ws3["A1"].alignment=ctr()
 ws3.row_dimensions[1].height=30
-for col,w in zip([1,2,3],[28,18,22]): cw(ws3,col,w)
+for col,w in zip([1,2],[34,20]): cw(ws3,col,w)
 
 dinner_groups = defaultdict(list)
 for r in rows:
@@ -205,29 +206,28 @@ row=2
 for host,guests in dinner_groups.items():
     host_addr=addr_map.get(host,'')
     ws3.row_dimensions[row].height=26
-    ws3.merge_cells(f"A{row}:C{row}")
+    ws3.merge_cells(f"A{row}:B{row}")
     ws3[f"A{row}"]=f"Chez {host}  —  {host_addr}"
     ws3[f"A{row}"].font=Font(name='Arial',bold=True,size=11,color='FFFFFF')
     ws3[f"A{row}"].fill=fill("BF360C"); ws3[f"A{row}"].alignment=lft(); row+=1
     ws3.row_dimensions[row].height=20
-    for ci,h in enumerate(["Invite","Apero → ici (min)","Meme hote apero ?"],1):
+    for ci,h in enumerate(["👥 Invite","🚶 Apero → ici (min)"],1):
         c=ws3.cell(row=row,column=ci,value=h)
         c.font=hfont(size=9); c.fill=fill("FF7043"); c.alignment=ctr(); c.border=bd()
     row+=1
     if not guests:
         ws3.row_dimensions[row].height=18
-        for ci,v in enumerate(["(aucun invite)","",""],1):
+        for ci,v in enumerate(["(aucun invite externe)",""],1):
             c=ws3.cell(row=row,column=ci,value=v)
             c.fill=fill("FFF3E0"); c.font=cfont(bold=(ci==1))
             c.alignment=lft() if ci==1 else ctr(); c.border=bd()
         row+=1
     else:
         for g in guests:
-            same=g['drinks_host']==g['dinner_host']
             ws3.row_dimensions[row].height=18
-            for ci,v in enumerate([g['name'],g['w2'],"OUI" if same else "Non"],1):
+            for ci,v in enumerate([g['name'],g['w2']],1):
                 c=ws3.cell(row=row,column=ci,value=v)
-                c.fill=fill("FFCCBC" if same else "FFF3E0")
+                c.fill=fill("FFF3E0")
                 c.font=cfont(bold=(ci==1)); c.alignment=lft() if ci==1 else ctr(); c.border=bd()
                 if ci==2: c.number_format='0.0'
             row+=1
@@ -236,36 +236,33 @@ for host,guests in dinner_groups.items():
 # ═══ SHEET 4 — Stats ═════════════════════════════════════════════════════════
 ws5=wb.create_sheet("Statistiques")
 ws5.sheet_view.showGridLines=False
-for col,w in zip([1,2,3],[30,20,22]): cw(ws5,col,w)
+for col,w in zip([1,2,3],[36,22,26]): cw(ws5,col,w)
 ws5.merge_cells("A1:C1")
-ws5["A1"]="STATISTIQUES"
+ws5["A1"]="📈 STATISTIQUES"
 ws5["A1"].font=Font(name='Arial',bold=True,size=14,color='FFFFFF')
 ws5["A1"].fill=fill("263238"); ws5["A1"].alignment=ctr(); ws5.row_dimensions[1].height=30
 
 total_walk=sum(r['total'] for r in rows)
 max_r=max(rows,key=lambda r:r['total']); min_r=min(rows,key=lambda r:r['total'])
-same_count=sum(1 for r in rows if r['drinks_host']==r['dinner_host'])
 
 stats=[
-    ("","",""),("PARTICIPANTS","",""),
+    ("","",""),("👥 PARTICIPANTS","",""),
     ("Nombre total",len(rows),"personnes"),
-    ("","",""),("APERITIF","",""),("Hotes",len(drinks_groups),""),
+    ("","",""),("🍸 APERITIF","",""),("Hotes",len(drinks_groups),""),
 ]
 for h,g in drinks_groups.items():
     stats.append((f"  Chez {h}",f"{len(g)} invites",""))
-stats+=[("","",""),("DINER","",""),("Hotes",len(dinner_groups),"")]
+stats+=[("","",""),("🍽️ DINER","",""),("Hotes",len(dinner_groups),"")]
 for h,g in dinner_groups.items():
     stats.append((f"  Chez {h}",f"{len(g)} invites",""))
 stats+=[
-    ("","",""),("TEMPS DE MARCHE","",""),
+    ("","",""),("🚶 TEMPS DE MARCHE","",""),
     ("Total cumule",f"{total_walk:.1f} min","tous"),
     ("Moyenne / personne",f"{total_walk/len(rows):.1f} min",""),
     ("Maximum",f"{max_r['total']:.1f} min",f"({max_r['name']})"),
     ("Minimum",f"{min_r['total']:.1f} min",f"({min_r['name']})"),
-    ("","",""),("QUALITE","",""),
-    ("Meme hote apero+diner",same_count,"ideal = 0"),
 ]
-sections={"PARTICIPANTS","APERITIF","DINER","TEMPS DE MARCHE","QUALITE"}
+sections={"👥 PARTICIPANTS","🍸 APERITIF","🍽️ DINER","🚶 TEMPS DE MARCHE"}
 for ri,(a,b,c) in enumerate(stats,2):
     ws5.row_dimensions[ri].height=20
     for ci,v in enumerate([a,b,c],1):
