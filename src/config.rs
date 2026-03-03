@@ -21,16 +21,22 @@ pub struct Config {
 pub struct GoogleDriveConfig {
     #[serde(default)]
     pub enabled: bool,
-    #[serde(default = "default_sa_path")]
-    pub service_account_path: String,
+    #[serde(default = "default_client_secret_path")]
+    pub client_secret_path: String,
+    #[serde(default = "default_token_path")]
+    pub token_path: String,
     #[serde(default)]
     pub folder_id: String,
     #[serde(default = "default_filename")]
     pub filename: String,
 }
 
-fn default_sa_path() -> String {
-    "credentials/service_account.json".to_string()
+fn default_client_secret_path() -> String {
+    "credentials/client_secret.json".to_string()
+}
+
+fn default_token_path() -> String {
+    "credentials/token.json".to_string()
 }
 
 fn default_filename() -> String {

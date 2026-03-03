@@ -66,14 +66,10 @@ Ce script fait tout :
       max_iterations: 50000
     google_drive:
       enabled: false
-      auth_method: "oauth"   # "oauth" (recommande) ou "service_account"
       client_secret_path: "credentials/client_secret.json"
       token_path: "credentials/token.json"
-      service_account_path: "credentials/service_account.json"
       folder_id: ""
       filename: "progressive_dinner_result.xlsx"
-      shared_drive_id: ""   # optionnel (recommande avec service account)
-      impersonate_user: ""  # optionnel (delegation domaine requise)
 
 ---
 
@@ -93,15 +89,12 @@ Ce script fait tout :
 
     google_drive:
       enabled: true
-      auth_method: "oauth"
       client_secret_path: "credentials/client_secret.json"
       token_path: "credentials/token.json"
       folder_id: "ID_APRES_/folders/_DANS_L_URL"
 
 **6.** Au premier lancement, un lien d'autorisation OAuth est affiche. Connecte-toi puis valide.
 Le token est sauvegarde dans `credentials/token.json`.
-
-**7.** Mode service account toujours possible, mais limite sur "My Drive" (quota).
 
 ---
 

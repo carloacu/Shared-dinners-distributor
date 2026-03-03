@@ -16,7 +16,7 @@ if missing:
     print("Fix: pip install " + " ".join(missing))
     sys.exit(1)
 import yaml
-from google.oauth2 import service_account, credentials as user_credentials
+from google.oauth2 import credentials as user_credentials
 from google.auth import exceptions as google_auth_exceptions
 from google.auth.transport.requests import Request
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -24,7 +24,6 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from googleapiclient.errors import HttpError
 
-EXIT_SKIPPED = 2
 SCOPES = ["https://www.googleapis.com/auth/drive"]
 
 
@@ -78,27 +77,13 @@ def main():
     fp=sys.argv[1]
     if not os.path.exists(fp): print("Error: "+fp+" not found"); sys.exit(1)
     cfg=yaml.safe_load(open("data/input/config.yaml")).get("google_drive", {})
-    auth_method = cfg.get("auth_method", "").strip().lower()
-    if not auth_method:
-        auth_method = "oauth" if cfg.get("client_secret_path") else "service_account"
-
-    sa=cfg.get("service_account_path","credentials/service_account.json")
     client_secret_path = cfg.get("client_secret_path", "credentials/client_secret.json")
     token_path = cfg.get("token_path", "credentials/token.json")
     fid=cfg.get("folder_id","")
     fn=cfg.get("filename",os.path.basename(fp))
-    impersonate_user = cfg.get("impersonate_user", "").strip()
-    shared_drive_id = cfg.get("shared_drive_id", "").strip()
     if not fid: print("Error: folder_id not set in config.yaml"); sys.exit(1)
 
-    if auth_method == "oauth":
-        creds = load_oauth_credentials(client_secret_path, token_path)
-    else:
-        if not os.path.exists(sa): print("Error: "+sa+" not found"); sys.exit(1)
-        creds=service_account.Credentials.from_service_account_file(sa,scopes=SCOPES)
-        if impersonate_user:
-            creds = creds.with_subject(impersonate_user)
-
+    creds = load_oauth_credentials(client_secret_path, token_path)
     svc=build("drive","v3",credentials=creds)
 
     # Resolve the parent folder to detect whether it is in a Shared Drive.
@@ -108,13 +93,12 @@ def main():
             fields="id,name,driveId",
             supportsAllDrives=True
         ).execute()
-        if not shared_drive_id:
-            shared_drive_id = folder.get("driveId", "")
+        shared_drive_id = folder.get("driveId", "")
     except HttpError as e:
         reason, message = parse_http_error(e)
         if reason in {"notFound", "insufficientFilePermissions"}:
             print("Drive API error: cannot access folder_id '%s' (%s)." % (fid, message))
-            print("Make sure the service account email has Editor access to this folder.")
+            print("Make sure your authenticated Google account has Editor access to this folder.")
         else:
             print("Drive API error: " + str(e))
         sys.exit(1)
@@ -122,18 +106,6 @@ def main():
         print("Drive network error: " + str(e))
         print("Hint: check internet/DNS connectivity and retry.")
         sys.exit(1)
-
-    # Service accounts cannot upload into personal "My Drive" folders.
-    if auth_method == "service_account" and not shared_drive_id and not impersonate_user:
-        print(
-            "Upload skipped: folder_id is in 'My Drive' and service accounts have no storage quota."
-        )
-        print(
-            "Fix: move the folder to a Shared Drive (or set shared_drive_id) "
-            "or configure google_drive.impersonate_user."
-        )
-        print("Current folder_id: " + fid)
-        sys.exit(EXIT_SKIPPED)
 
     safe_name = fn.replace("'", "\\'")
     q="name='%s' and '%s' in parents and trashed=false" % (safe_name,fid)
@@ -172,16 +144,8 @@ def main():
     except HttpError as e:
         reason, message = parse_http_error(e)
         print("Drive API error: " + str(e))
-        if reason == "storageQuotaExceeded" and auth_method == "service_account":
-            print(
-                "Hint: service accounts cannot upload to 'My Drive'. "
-                "Use a Shared Drive folder (set google_drive.shared_drive_id optionally) "
-                "or set google_drive.impersonate_user with domain-wide delegation."
-            )
-            print("Current folder_id: " + fid)
-            sys.exit(EXIT_SKIPPED)
-        elif reason in {"notFound", "insufficientFilePermissions"}:
-            print("Hint: the service account may not have access to this folder_id: " + fid)
+        if reason in {"notFound", "insufficientFilePermissions"}:
+            print("Hint: your authenticated account may not have access to this folder_id: " + fid)
         elif message:
             print("Details: " + message)
         sys.exit(1)
