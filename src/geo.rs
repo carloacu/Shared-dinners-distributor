@@ -131,13 +131,19 @@ pub struct TravelMatrix {
     #[allow(dead_code)]
     pub n: usize,
     /// home_to[i][j] = walk seconds from person i's address to person j's address
+    /// Only relevant arcs are populated:
+    /// - any person -> drinks host
+    /// - drinks host -> dinner host
     pub home_to: Vec<Vec<f64>>,
     /// to_dessert[i] = walk seconds from person i's address to the dessert venue
+    /// Only dinner-host indices are populated.
     pub to_dessert: Vec<f64>,
 }
 
 pub fn compute_all_travel_times(
     people: &[Person],
+    hosts_drinks: &[usize],
+    hosts_dinner: &[usize],
     dessert_address: &str,
     cfg: &Config,
     cache: &mut DistCache,
@@ -146,14 +152,23 @@ pub fn compute_all_travel_times(
     let mut home_to = vec![vec![0.0_f64; n]; n];
     let mut to_dessert = vec![0.0_f64; n];
 
+    // 1) Any participant home -> any possible drinks host address
     for i in 0..n {
-        for j in 0..n {
-            if i == j {
-                continue;
-            }
-            home_to[i][j] = cache.get_or_fetch(&people[i].address, &people[j].address, cfg)?;
+        for &dh in hosts_drinks {
+            home_to[i][dh] = cache.get_or_fetch(&people[i].address, &people[dh].address, cfg)?;
         }
-        to_dessert[i] = cache.get_or_fetch(&people[i].address, dessert_address, cfg)?;
+    }
+
+    // 2) Any possible drinks host address -> any possible dinner host address
+    for &dh in hosts_drinks {
+        for &nh in hosts_dinner {
+            home_to[dh][nh] = cache.get_or_fetch(&people[dh].address, &people[nh].address, cfg)?;
+        }
+    }
+
+    // 3) Any possible dinner host address -> dessert address
+    for &nh in hosts_dinner {
+        to_dessert[nh] = cache.get_or_fetch(&people[nh].address, dessert_address, cfg)?;
     }
 
     Ok(TravelMatrix { n, home_to, to_dessert })

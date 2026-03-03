@@ -26,15 +26,7 @@ fn main() -> Result<()> {
         ids.len()
     });
 
-    // 3. Compute travel times directly from addresses (with cache)
-    info!("Computing travel times...");
-    let dessert_addr = cfg.dessert_full_address();
-    let mut dist_cache = geo::DistCache::load("data/cache/distance_cache.json")?;
-    let travel = geo::compute_all_travel_times(&people, &dessert_addr, &cfg, &mut dist_cache)?;
-    dist_cache.save("data/cache/distance_cache.json")?;
-
-    // 4. Find initial valid solution
-    info!("Finding initial valid solution...");
+    // 3. Resolve candidate hosts
     let hosts_drinks: Vec<usize> = people
         .iter()
         .enumerate()
@@ -54,19 +46,35 @@ fn main() -> Result<()> {
         hosts_dinner.len()
     );
 
+    // 4. Compute only relevant travel times (with cache)
+    info!("Computing travel times...");
+    let dessert_addr = cfg.dessert_full_address();
+    let mut dist_cache = geo::DistCache::load("data/cache/distance_cache.json")?;
+    let travel = geo::compute_all_travel_times(
+        &people,
+        &hosts_drinks,
+        &hosts_dinner,
+        &dessert_addr,
+        &cfg,
+        &mut dist_cache,
+    )?;
+    dist_cache.save("data/cache/distance_cache.json")?;
+
+    // 5. Find initial valid solution
+    info!("Finding initial valid solution...");
     let initial = solver::find_initial_solution(&people, &hosts_drinks, &hosts_dinner, &cfg)?;
     info!("Initial solution found.");
 
     let initial_score = solver::evaluate(&initial, &people, &travel, &cfg);
     info!("Initial score: {:.4}", initial_score);
 
-    // 5. Simulated annealing optimization
+    // 6. Simulated annealing optimization
     info!("Starting simulated annealing...");
     let best = solver::simulated_annealing(initial, &people, &hosts_drinks, &hosts_dinner, &travel, &cfg)?;
     let best_score = solver::evaluate(&best, &people, &travel, &cfg);
     info!("Best score after SA: {:.4}", best_score);
 
-    // 6. Write output
+    // 7. Write output
     let run_ts = Local::now().format("%Y%m%d_%H%M%S").to_string();
     let txt_output = format!("data/output/result_{}.txt", run_ts);
     let csv_output = format!("data/output/result_{}.csv", run_ts);
@@ -85,7 +93,7 @@ fn main() -> Result<()> {
         "python3"
     };
 
-    // 7. Generate Excel file
+    // 8. Generate Excel file
     info!("Generating Excel report...");
     let xlsx_status = std::process::Command::new(python)
         .arg("scripts/make_xlsx.py")
@@ -98,7 +106,7 @@ fn main() -> Result<()> {
         Err(e) => log::warn!("Failed to run Excel script: {}", e),
     }
 
-    // 8. Upload to Google Drive if enabled
+    // 9. Upload to Google Drive if enabled
     if cfg.google_drive.enabled {
         info!("Uploading to Google Drive...");
         let status = std::process::Command::new(python)
