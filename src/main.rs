@@ -7,19 +7,23 @@ mod output;
 use anyhow::Result;
 use chrono::Local;
 use log::info;
+use std::env;
 
 fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     info!("=== Progressive Dinner Optimizer ===");
+    let people_path = env::args()
+        .nth(1)
+        .unwrap_or_else(|| "data/input/people.csv".to_string());
 
     // 1. Load configuration
     info!("Loading configuration...");
     let cfg = config::Config::load("data/input/config.yaml")?;
 
     // 2. Load people
-    info!("Loading people from CSV...");
-    let people = model::load_people("data/input/people.csv")?;
+    info!("Loading people from CSV: {}", people_path);
+    let people = model::load_people(&people_path)?;
     info!("Loaded {} persons in {} group(s)", people.len(), {
         let mut ids: Vec<u32> = people.iter().map(|p| p.group_id).collect();
         ids.dedup();
@@ -99,6 +103,7 @@ fn main() -> Result<()> {
         .arg("scripts/make_xlsx.py")
         .arg(&csv_output)
         .arg(&xlsx_output)
+        .arg(&people_path)
         .status();
     match xlsx_status {
         Ok(s) if s.success() => info!("Excel report generated: {}", xlsx_output),

@@ -34,10 +34,13 @@ def cw(ws, col, w): ws.column_dimensions[get_column_letter(col)].width = w
 # ── read inputs ───────────────────────────────────────────────────────────────
 csv_path = sys.argv[1] if len(sys.argv) >= 2 else 'data/output/result.csv'
 out = sys.argv[2] if len(sys.argv) >= 3 else 'data/output/result.xlsx'
+people_path = sys.argv[3] if len(sys.argv) >= 4 else 'data/input/people.csv'
 cfg_path = 'data/input/config.yaml'
 
 if not os.path.exists(csv_path):
     print(f"Error: {csv_path} not found — run cargo first"); sys.exit(1)
+if not os.path.exists(people_path):
+    print(f"Error: people file not found: {people_path}"); sys.exit(1)
 
 cfg = yaml.safe_load(open(cfg_path))
 dessert_addr = f"{cfg['dessert_address']} {cfg['dessert_postal_code']} {cfg['dessert_city']}"
@@ -63,7 +66,7 @@ def walk(addr_from, addr_to):
 
 # Build address map: name -> address
 people_csv = []
-with open('data/input/people.csv') as f:
+with open(people_path) as f:
     for r in csv.DictReader(f):
         addr = f"{r['postal_address']} {r['postal_code']} {r['city']}"
         people_csv.append({'name': r['name'], 'addr': addr})
