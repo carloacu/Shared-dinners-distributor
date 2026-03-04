@@ -11,7 +11,7 @@ use std::path::Path;
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct DistCache {
-    /// Key: "adresse A|||adresse B"  →  walking seconds
+    /// Key: unordered pair "min(adresse A, adresse B)|||max(...)"  →  walking seconds
     pub entries: HashMap<String, f64>,
 }
 
@@ -38,14 +38,37 @@ impl DistCache {
         format!("{}|||{}", from, to)
     }
 
+    fn symmetric_key(a: &str, b: &str) -> String {
+        if a <= b {
+            Self::key(a, b)
+        } else {
+            Self::key(b, a)
+        }
+    }
+
     pub fn get_or_fetch(&mut self, from: &str, to: &str, cfg: &Config) -> Result<f64> {
         if from == to {
             return Ok(0.0);
         }
-        let k = Self::key(from, to);
-        if let Some(v) = self.entries.get(&k) {
-            return Ok(*v);
+
+        // New canonical (symmetric) key.
+        let symmetric = Self::symmetric_key(from, to);
+        if let Some(v) = self.entries.get(&symmetric).copied() {
+            return Ok(v);
         }
+
+        // Backward-compatibility with older directional cache keys.
+        let forward = Self::key(from, to);
+        if let Some(v) = self.entries.get(&forward).copied() {
+            self.entries.insert(symmetric, v);
+            return Ok(v);
+        }
+        let reverse = Self::key(to, from);
+        if let Some(v) = self.entries.get(&reverse).copied() {
+            self.entries.insert(symmetric, v);
+            return Ok(v);
+        }
+
         info!("Fetching travel time: {} -> {}", from, to);
         let secs = if cfg.ors_api_key == "YOUR_ORS_API_KEY_HERE" || cfg.ors_api_key.is_empty() {
             warn!("No ORS API key – using haversine estimate.");
@@ -53,7 +76,7 @@ impl DistCache {
         } else {
             fetch_ors_seconds_by_address(from, to, &cfg.ors_api_key)?
         };
-        self.entries.insert(k, secs);
+        self.entries.insert(symmetric, secs);
         Ok(secs)
     }
 }

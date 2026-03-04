@@ -61,8 +61,14 @@ if os.path.exists(cache_path):
 def walk(addr_from, addr_to):
     """Return walk time in minutes from cache, or 0 if not found."""
     if addr_from == addr_to: return 0.0
-    key = f"{addr_from}|||{addr_to}"
-    return round(dist.get(key, 0) / 60.0, 1)
+    # Walking time is assumed symmetric: A->B == B->A.
+    key = f"{addr_from}|||{addr_to}" if addr_from <= addr_to else f"{addr_to}|||{addr_from}"
+    if key in dist:
+        return round(dist[key] / 60.0, 1)
+    # Backward compatibility with older directional cache files.
+    legacy = f"{addr_from}|||{addr_to}"
+    reverse = f"{addr_to}|||{addr_from}"
+    return round(dist.get(legacy, dist.get(reverse, 0)) / 60.0, 1)
 
 # Build address map: name -> address
 people_csv = []
