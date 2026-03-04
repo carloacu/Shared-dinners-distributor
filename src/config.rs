@@ -77,6 +77,9 @@ impl Config {
     }
 
     pub fn dessert_full_address(&self) -> String {
-        format!("{} {} {}", self.dessert_address, self.dessert_postal_code, self.dessert_city)
+        format!(
+            "{} {} {}",
+            self.dessert_address, self.dessert_postal_code, self.dessert_city
+        )
     }
 }

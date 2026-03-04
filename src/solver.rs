@@ -5,6 +5,7 @@ use anyhow::{anyhow, Result};
 use log::info;
 use rand::prelude::*;
 use std::collections::HashMap;
+use std::thread;
 
 // ─── Solution representation ─────────────────────────────────────────────────
 
@@ -194,10 +195,7 @@ fn age_variance(ages: &[u32]) -> f64 {
         return 0.0;
     }
     let mean = ages.iter().map(|a| *a as f64).sum::<f64>() / ages.len() as f64;
-    ages.iter()
-        .map(|a| (*a as f64 - mean).powi(2))
-        .sum::<f64>()
-        / ages.len() as f64
+    ages.iter().map(|a| (*a as f64 - mean).powi(2)).sum::<f64>() / ages.len() as f64
 }
 
 fn gender_imbalance(members: &[usize], people: &[Person]) -> f64 {
@@ -230,6 +228,10 @@ pub fn find_initial_solution(
     let n = people.len();
     let groups = unique_groups(people);
     let ng = groups.len();
+    let group_members_list: Vec<Vec<usize>> = groups
+        .iter()
+        .map(|(_, rep)| group_members(people, *rep))
+        .collect();
 
     if hosts_drinks.is_empty() {
         return Err(anyhow!("No drinks hosts found"));
@@ -265,19 +267,26 @@ pub fn find_initial_solution(
     for attempt in 0..10_000 {
         let _ = attempt;
         // Random assignment
-        let mut dh_assign: Vec<usize> = (0..ng).map(|i| hosts_drinks[i % hosts_drinks.len()]).collect();
-        let mut nh_assign: Vec<usize> = (0..ng).map(|i| hosts_dinner[i % hosts_dinner.len()]).collect();
+        let mut dh_assign: Vec<usize> = (0..ng)
+            .map(|i| hosts_drinks[i % hosts_drinks.len()])
+            .collect();
+        let mut nh_assign: Vec<usize> = (0..ng)
+            .map(|i| hosts_dinner[i % hosts_dinner.len()])
+            .collect();
         dh_assign.shuffle(&mut rng);
         nh_assign.shuffle(&mut rng);
 
-        for (gi, (_, rep)) in groups.iter().enumerate() {
-            for member in group_members(people, *rep) {
-                drinks_host[member] = dh_assign[gi];
-                dinner_host[member] = nh_assign[gi];
+        for (gi, _) in groups.iter().enumerate() {
+            for member in &group_members_list[gi] {
+                drinks_host[*member] = dh_assign[gi];
+                dinner_host[*member] = nh_assign[gi];
             }
         }
 
-        let sol = Solution { drinks_host: drinks_host.clone(), dinner_host: dinner_host.clone() };
+        let sol = Solution {
+            drinks_host: drinks_host.clone(),
+            dinner_host: dinner_host.clone(),
+        };
         if is_valid(&sol, people, cfg) {
             return Ok(sol);
         }
@@ -326,33 +335,55 @@ fn systematic_initial(
         .iter()
         .map(|&h| people[h].max_guests_drinks)
         .collect();
-    let drinks_can_pmr: Vec<bool> = hosts_drinks.iter().map(|&h| people[h].can_host_pmr).collect();
-    let drinks_assign = assign_groups_to_hosts(
-        &group_sizes,
-        &group_need_pmr,
-        hosts_drinks,
-        &drinks_caps,
-        &drinks_can_pmr,
-        &drinks_owner_group,
-        cfg.min_guests_for_drinks,
-    )
-    .ok_or_else(|| anyhow!("Cannot find valid drinks assignment with current min/max and PMR constraints"))?;
-
+    let drinks_can_pmr: Vec<bool> = hosts_drinks
+        .iter()
+        .map(|&h| people[h].can_host_pmr)
+        .collect();
     let dinner_caps: Vec<usize> = hosts_dinner
         .iter()
         .map(|&h| people[h].max_guests_dinner)
         .collect();
-    let dinner_can_pmr: Vec<bool> = hosts_dinner.iter().map(|&h| people[h].can_host_pmr).collect();
-    let dinner_assign = assign_groups_to_hosts(
-        &group_sizes,
-        &group_need_pmr,
-        hosts_dinner,
-        &dinner_caps,
-        &dinner_can_pmr,
-        &dinner_owner_group,
-        cfg.min_guests_for_dinner,
-    )
-    .ok_or_else(|| anyhow!("Cannot find valid dinner assignment with current min/max and PMR constraints"))?;
+    let dinner_can_pmr: Vec<bool> = hosts_dinner
+        .iter()
+        .map(|&h| people[h].can_host_pmr)
+        .collect();
+
+    // Drinks and dinner assignments are independent; solve them in parallel.
+    let (drinks_assign_opt, dinner_assign_opt) = thread::scope(|s| {
+        let drinks_task = s.spawn(|| {
+            assign_groups_to_hosts(
+                &group_sizes,
+                &group_need_pmr,
+                hosts_drinks,
+                &drinks_caps,
+                &drinks_can_pmr,
+                &drinks_owner_group,
+                cfg.min_guests_for_drinks,
+            )
+        });
+        let dinner_task = s.spawn(|| {
+            assign_groups_to_hosts(
+                &group_sizes,
+                &group_need_pmr,
+                hosts_dinner,
+                &dinner_caps,
+                &dinner_can_pmr,
+                &dinner_owner_group,
+                cfg.min_guests_for_dinner,
+            )
+        });
+        (
+            drinks_task.join().ok().flatten(),
+            dinner_task.join().ok().flatten(),
+        )
+    });
+
+    let drinks_assign = drinks_assign_opt.ok_or_else(|| {
+        anyhow!("Cannot find valid drinks assignment with current min/max and PMR constraints")
+    })?;
+    let dinner_assign = dinner_assign_opt.ok_or_else(|| {
+        anyhow!("Cannot find valid dinner assignment with current min/max and PMR constraints")
+    })?;
 
     let mut drinks_host = vec![0usize; n];
     let mut dinner_host = vec![0usize; n];
@@ -363,9 +394,14 @@ fn systematic_initial(
         }
     }
 
-    let sol = Solution { drinks_host, dinner_host };
+    let sol = Solution {
+        drinks_host,
+        dinner_host,
+    };
     if !is_valid(&sol, &people, cfg) {
-        return Err(anyhow!("Systematic assignment produced an invalid solution"));
+        return Err(anyhow!(
+            "Systematic assignment produced an invalid solution"
+        ));
     }
     Ok(sol)
 }
@@ -382,58 +418,252 @@ fn assign_groups_to_hosts(
     if group_sizes.is_empty() {
         return Some(Vec::new());
     }
+    if hosts.is_empty() {
+        return None;
+    }
 
     let total_people: usize = group_sizes.iter().sum();
     let total_capacity: usize = host_caps.iter().sum();
     if total_people > total_capacity {
         return None;
     }
+    if total_people < min_guests {
+        return None;
+    }
+    let total_pmr_people: usize = group_sizes
+        .iter()
+        .enumerate()
+        .filter(|(gi, _)| group_need_pmr[*gi])
+        .map(|(_, &sz)| sz)
+        .sum();
+    let total_pmr_capacity: usize = host_caps
+        .iter()
+        .zip(host_can_pmr.iter())
+        .filter(|(_, can_pmr)| **can_pmr)
+        .map(|(cap, _)| *cap)
+        .sum();
+    if total_pmr_people > total_pmr_capacity {
+        return None;
+    }
 
-    let mut order: Vec<usize> = (0..group_sizes.len()).collect();
     let mut is_owner_group = vec![false; group_sizes.len()];
-    for &owner_group in host_owner_group {
+    for (_slot, &owner_group) in host_owner_group.iter().enumerate() {
         if owner_group < is_owner_group.len() {
             is_owner_group[owner_group] = true;
         }
     }
+
+    // Fast path: randomized greedy construction with restart budget.
+    let greedy_restarts = if group_sizes.len() <= 40 { 32 } else { 96 };
+    let mut rng = rand::thread_rng();
+    for _ in 0..greedy_restarts {
+        if let Some(group_slot_assign) = greedy_assign_groups_to_host_slots(
+            group_sizes,
+            group_need_pmr,
+            host_caps,
+            host_can_pmr,
+            host_owner_group,
+            &is_owner_group,
+            min_guests,
+            total_people,
+            total_pmr_people,
+            total_capacity,
+            total_pmr_capacity,
+            &mut rng,
+        ) {
+            let assignment: Vec<usize> = group_slot_assign
+                .into_iter()
+                .map(|slot| hosts[slot])
+                .collect();
+            return Some(assignment);
+        }
+    }
+
+    // Fallback: bounded DFS with stronger pruning and randomized restarts.
+    let backtrack_restarts = if group_sizes.len() <= 40 { 24 } else { 48 };
+    let node_budget_per_restart = if group_sizes.len() <= 40 {
+        500_000
+    } else {
+        200_000
+    };
+    for restart in 0..backtrack_restarts {
+        let mut order: Vec<usize> = (0..group_sizes.len()).collect();
+        let jitter: Vec<u32> = (0..group_sizes.len()).map(|_| rng.gen()).collect();
+        order.sort_by_key(|&gi| {
+            (
+                std::cmp::Reverse(is_owner_group[gi] as u8),
+                std::cmp::Reverse(group_need_pmr[gi] as u8),
+                std::cmp::Reverse(group_sizes[gi]),
+                if restart == 0 { gi as u32 } else { jitter[gi] },
+            )
+        });
+
+        let mut counts = vec![0usize; hosts.len()];
+        let mut assigned_group_slot = vec![usize::MAX; group_sizes.len()];
+        let mut nodes_left = node_budget_per_restart;
+
+        if backtrack_assign_groups(
+            0,
+            &order,
+            group_sizes,
+            group_need_pmr,
+            host_caps,
+            host_can_pmr,
+            host_owner_group,
+            min_guests,
+            &mut counts,
+            &mut assigned_group_slot,
+            total_people,
+            total_pmr_people,
+            total_capacity,
+            total_pmr_capacity,
+            0,
+            &mut nodes_left,
+            restart > 0,
+            &mut rng,
+        ) {
+            let assignment: Vec<usize> = assigned_group_slot
+                .into_iter()
+                .map(|slot| hosts[slot])
+                .collect();
+            return Some(assignment);
+        }
+    }
+
+    info!(
+        "Systematic assignment exhausted search budget (greedy restarts={} | backtracking restarts={} | node budget/restart={})",
+        greedy_restarts, backtrack_restarts, node_budget_per_restart
+    );
+    None
+}
+
+fn greedy_assign_groups_to_host_slots(
+    group_sizes: &[usize],
+    group_need_pmr: &[bool],
+    host_caps: &[usize],
+    host_can_pmr: &[bool],
+    host_owner_group: &[usize],
+    is_owner_group: &[bool],
+    min_guests: usize,
+    total_people: usize,
+    total_pmr_people: usize,
+    total_capacity: usize,
+    total_pmr_capacity: usize,
+    rng: &mut impl Rng,
+) -> Option<Vec<usize>> {
+    let mut order: Vec<usize> = (0..group_sizes.len()).collect();
+    let jitter: Vec<u32> = (0..group_sizes.len()).map(|_| rng.gen()).collect();
     order.sort_by_key(|&gi| {
         (
             std::cmp::Reverse(is_owner_group[gi] as u8),
             std::cmp::Reverse(group_need_pmr[gi] as u8),
             std::cmp::Reverse(group_sizes[gi]),
+            jitter[gi],
         )
     });
 
-    let mut counts = vec![0usize; hosts.len()];
-    let mut assigned_host_slot = vec![usize::MAX; order.len()];
     let mut assigned_group_slot = vec![usize::MAX; group_sizes.len()];
-    let remaining_people = total_people;
-    let remaining_pmr_people: usize = order
-        .iter()
-        .filter(|&&gi| group_need_pmr[gi])
-        .map(|&gi| group_sizes[gi])
-        .sum();
+    let mut counts = vec![0usize; host_caps.len()];
 
-    if backtrack_assign_groups(
-        0,
-        &order,
-        group_sizes,
-        group_need_pmr,
-        host_caps,
-        host_can_pmr,
-        host_owner_group,
-        min_guests,
-        &mut counts,
-        &mut assigned_host_slot,
-        &mut assigned_group_slot,
-        remaining_people,
-        remaining_pmr_people,
-    ) {
-        let mut assignment = vec![0usize; group_sizes.len()];
-        for (pos, &gi) in order.iter().enumerate() {
-            assignment[gi] = hosts[assigned_host_slot[pos]];
+    let mut remaining_people = total_people;
+    let mut remaining_pmr_people = total_pmr_people;
+    let mut remaining_total_capacity = total_capacity;
+    let mut remaining_pmr_capacity = total_pmr_capacity;
+    let mut deficit_sum = 0usize;
+
+    for &gi in &order {
+        let gsize = group_sizes[gi];
+        let need_pmr = group_need_pmr[gi];
+        let mut candidates: Vec<(i32, usize)> = Vec::new();
+
+        for host_slot in 0..host_caps.len() {
+            if !can_assign_group_to_host(
+                gi,
+                host_slot,
+                gsize,
+                need_pmr,
+                &counts,
+                &assigned_group_slot,
+                host_caps,
+                host_can_pmr,
+                host_owner_group,
+            ) {
+                continue;
+            }
+            let old_count = counts[host_slot];
+            let new_count = old_count + gsize;
+            let closes_deficit =
+                host_deficit(old_count, min_guests) > 0 && host_deficit(new_count, min_guests) == 0;
+            let owner_slot = host_owner_group[host_slot] == gi;
+            let starts_new_host = old_count == 0;
+            let remaining_after = host_caps[host_slot] - new_count;
+            let score = (closes_deficit as i32) * 500
+                + ((old_count > 0) as i32) * 240
+                + (owner_slot as i32) * 120
+                + ((!starts_new_host) as i32) * 60
+                - remaining_after as i32;
+            candidates.push((score, host_slot));
         }
-        Some(assignment)
+
+        candidates.shuffle(rng);
+        candidates.sort_by(|a, b| b.0.cmp(&a.0));
+
+        let mut chosen: Option<(usize, usize, usize, usize, usize)> = None;
+        for &(_, host_slot) in &candidates {
+            let old_count = counts[host_slot];
+            let new_count = old_count + gsize;
+            let old_def = host_deficit(old_count, min_guests);
+            let new_def = host_deficit(new_count, min_guests);
+            let next_deficit_sum = deficit_sum + new_def - old_def;
+            let next_remaining_people = remaining_people - gsize;
+            let next_remaining_total_capacity = remaining_total_capacity - gsize;
+            let next_remaining_pmr_people = if need_pmr {
+                remaining_pmr_people - gsize
+            } else {
+                remaining_pmr_people
+            };
+            let next_remaining_pmr_capacity = if host_can_pmr[host_slot] {
+                remaining_pmr_capacity - gsize
+            } else {
+                remaining_pmr_capacity
+            };
+            let feasible = next_deficit_sum <= next_remaining_people
+                && next_remaining_total_capacity >= next_remaining_people
+                && next_remaining_pmr_capacity >= next_remaining_pmr_people;
+            if feasible {
+                chosen = Some((
+                    host_slot,
+                    next_deficit_sum,
+                    next_remaining_people,
+                    next_remaining_pmr_people,
+                    next_remaining_total_capacity,
+                ));
+                remaining_pmr_capacity = next_remaining_pmr_capacity;
+                break;
+            }
+        }
+
+        let Some((
+            host_slot,
+            next_deficit_sum,
+            next_remaining_people,
+            next_remaining_pmr_people,
+            next_remaining_total_capacity,
+        )) = chosen
+        else {
+            return None;
+        };
+
+        counts[host_slot] += gsize;
+        assigned_group_slot[gi] = host_slot;
+        deficit_sum = next_deficit_sum;
+        remaining_people = next_remaining_people;
+        remaining_pmr_people = next_remaining_pmr_people;
+        remaining_total_capacity = next_remaining_total_capacity;
+    }
+
+    if deficit_sum == 0 {
+        Some(assigned_group_slot)
     } else {
         None
     }
@@ -449,92 +679,150 @@ fn backtrack_assign_groups(
     host_owner_group: &[usize],
     min_guests: usize,
     counts: &mut [usize],
-    assigned_host_slot: &mut [usize],
     assigned_group_slot: &mut [usize],
     remaining_people: usize,
     remaining_pmr_people: usize,
+    remaining_total_capacity: usize,
+    remaining_pmr_capacity: usize,
+    deficit_sum: usize,
+    nodes_left: &mut usize,
+    randomize_values: bool,
+    rng: &mut impl Rng,
 ) -> bool {
+    if *nodes_left == 0 {
+        return false;
+    }
+    *nodes_left -= 1;
+
     if pos == order.len() {
-        return counts.iter().all(|&c| c == 0 || c >= min_guests);
+        return deficit_sum == 0;
     }
 
     let gi = order[pos];
     let gsize = group_sizes[gi];
     let need_pmr = group_need_pmr[gi];
 
+    let mut candidates: Vec<(i32, usize)> = Vec::new();
     for host_slot in 0..host_caps.len() {
-        let owner_group = host_owner_group[host_slot];
-        // A host slot can be used by others only if its owner group is assigned to it.
-        // Owner groups are assigned first in `order`.
-        if owner_group != gi && assigned_group_slot[owner_group] != host_slot {
-            continue;
-        }
-        if need_pmr && !host_can_pmr[host_slot] {
-            continue;
-        }
-        if counts[host_slot] + gsize > host_caps[host_slot] {
+        if !can_assign_group_to_host(
+            gi,
+            host_slot,
+            gsize,
+            need_pmr,
+            counts,
+            assigned_group_slot,
+            host_caps,
+            host_can_pmr,
+            host_owner_group,
+        ) {
             continue;
         }
 
-        counts[host_slot] += gsize;
-        assigned_host_slot[pos] = host_slot;
-        assigned_group_slot[gi] = host_slot;
+        let old_count = counts[host_slot];
+        let new_count = old_count + gsize;
+        let closes_deficit =
+            host_deficit(old_count, min_guests) > 0 && host_deficit(new_count, min_guests) == 0;
+        let owner_slot = host_owner_group[host_slot] == gi;
+        let remaining_after = host_caps[host_slot] - new_count;
+        let score = (closes_deficit as i32) * 500
+            + ((old_count > 0) as i32) * 240
+            + (owner_slot as i32) * 120
+            - remaining_after as i32;
+        candidates.push((score, host_slot));
+    }
 
+    if randomize_values {
+        candidates.shuffle(rng);
+    }
+    candidates.sort_by(|a, b| b.0.cmp(&a.0));
+
+    for (_, host_slot) in candidates {
+        let old_count = counts[host_slot];
+        let new_count = old_count + gsize;
+        let old_def = host_deficit(old_count, min_guests);
+        let new_def = host_deficit(new_count, min_guests);
+        let next_deficit_sum = deficit_sum + new_def - old_def;
         let next_remaining_people = remaining_people - gsize;
         let next_remaining_pmr_people = if need_pmr {
             remaining_pmr_people - gsize
         } else {
             remaining_pmr_people
         };
+        let next_remaining_total_capacity = remaining_total_capacity - gsize;
+        let next_remaining_pmr_capacity = if host_can_pmr[host_slot] {
+            remaining_pmr_capacity - gsize
+        } else {
+            remaining_pmr_capacity
+        };
 
-        let deficit_sum: usize = counts
-            .iter()
-            .filter(|&&c| c > 0 && c < min_guests)
-            .map(|&c| min_guests - c)
-            .sum();
-        let capacity_left: usize = host_caps
-            .iter()
-            .zip(counts.iter())
-            .map(|(cap, used)| cap.saturating_sub(*used))
-            .sum();
-        let pmr_capacity_left: usize = host_caps
-            .iter()
-            .zip(counts.iter())
-            .zip(host_can_pmr.iter())
-            .filter(|(_, can_pmr)| **can_pmr)
-            .map(|((cap, used), _)| cap.saturating_sub(*used))
-            .sum();
+        let feasible = next_deficit_sum <= next_remaining_people
+            && next_remaining_total_capacity >= next_remaining_people
+            && next_remaining_pmr_capacity >= next_remaining_pmr_people;
+        if !feasible {
+            continue;
+        }
 
-        let feasible = deficit_sum <= next_remaining_people
-            && capacity_left >= next_remaining_people
-            && pmr_capacity_left >= next_remaining_pmr_people;
+        counts[host_slot] = new_count;
+        assigned_group_slot[gi] = host_slot;
 
-        if feasible
-            && backtrack_assign_groups(
-                pos + 1,
-                order,
-                group_sizes,
-                group_need_pmr,
-                host_caps,
-                host_can_pmr,
-                host_owner_group,
-                min_guests,
-                counts,
-                assigned_host_slot,
-                assigned_group_slot,
-                next_remaining_people,
-                next_remaining_pmr_people,
-            )
-        {
+        if backtrack_assign_groups(
+            pos + 1,
+            order,
+            group_sizes,
+            group_need_pmr,
+            host_caps,
+            host_can_pmr,
+            host_owner_group,
+            min_guests,
+            counts,
+            assigned_group_slot,
+            next_remaining_people,
+            next_remaining_pmr_people,
+            next_remaining_total_capacity,
+            next_remaining_pmr_capacity,
+            next_deficit_sum,
+            nodes_left,
+            randomize_values,
+            rng,
+        ) {
             return true;
         }
 
-        counts[host_slot] -= gsize;
+        counts[host_slot] = old_count;
         assigned_group_slot[gi] = usize::MAX;
     }
 
-    assigned_host_slot[pos] = usize::MAX;
     false
+}
+
+fn can_assign_group_to_host(
+    group_idx: usize,
+    host_slot: usize,
+    group_size: usize,
+    need_pmr: bool,
+    counts: &[usize],
+    assigned_group_slot: &[usize],
+    host_caps: &[usize],
+    host_can_pmr: &[bool],
+    host_owner_group: &[usize],
+) -> bool {
+    let owner_group = host_owner_group[host_slot];
+    if owner_group != group_idx && assigned_group_slot[owner_group] != host_slot {
+        return false;
+    }
+    if need_pmr && !host_can_pmr[host_slot] {
+        return false;
+    }
+    counts[host_slot] + group_size <= host_caps[host_slot]
+}
+
+#[inline]
+fn host_deficit(count: usize, min_guests: usize) -> usize {
+    if count > 0 && count < min_guests {
+        min_guests - count
+    } else {
+        0
+    }
 }
 
 // ─── Simulated Annealing ──────────────────────────────────────────────────────
@@ -565,7 +853,14 @@ pub fn simulated_annealing(
             total_iter += 1;
 
             // Generate a neighbour by random perturbation
-            let neighbor = perturb(&current, people, &groups, hosts_drinks, hosts_dinner, &mut rng);
+            let neighbor = perturb(
+                &current,
+                people,
+                &groups,
+                hosts_drinks,
+                hosts_dinner,
+                &mut rng,
+            );
             if !is_valid(&neighbor, people, cfg) {
                 continue;
             }
@@ -594,7 +889,10 @@ pub fn simulated_annealing(
         }
     }
 
-    info!("SA finished after {} iterations. Best cost: {:.4}", total_iter, best_cost);
+    info!(
+        "SA finished after {} iterations. Best cost: {:.4}",
+        total_iter, best_cost
+    );
     Ok(best)
 }
 

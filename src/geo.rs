@@ -166,8 +166,14 @@ fn nominatim_coords(address: &str) -> Result<(f64, f64)> {
     if arr.is_empty() {
         return Err(anyhow!("No geocode result for: {}", address));
     }
-    let lat: f64 = arr[0]["lat"].as_str().ok_or_else(|| anyhow!("No lat"))?.parse()?;
-    let lon: f64 = arr[0]["lon"].as_str().ok_or_else(|| anyhow!("No lon"))?.parse()?;
+    let lat: f64 = arr[0]["lat"]
+        .as_str()
+        .ok_or_else(|| anyhow!("No lat"))?
+        .parse()?;
+    let lon: f64 = arr[0]["lon"]
+        .as_str()
+        .ok_or_else(|| anyhow!("No lon"))?
+        .parse()?;
     Ok((lat, lon))
 }
 
@@ -197,8 +203,12 @@ fn ors_geocode(address: &str, api_key: &str) -> Result<(f64, f64)> {
     );
     let resp: serde_json::Value = reqwest::blocking::get(&url)?.json()?;
     let coords = &resp["features"][0]["geometry"]["coordinates"];
-    let lon = coords[0].as_f64().ok_or_else(|| anyhow!("ORS geocode: no lon for {}", address))?;
-    let lat = coords[1].as_f64().ok_or_else(|| anyhow!("ORS geocode: no lat for {}", address))?;
+    let lon = coords[0]
+        .as_f64()
+        .ok_or_else(|| anyhow!("ORS geocode: no lon for {}", address))?;
+    let lat = coords[1]
+        .as_f64()
+        .ok_or_else(|| anyhow!("ORS geocode: no lat for {}", address))?;
     Ok((lon, lat))
 }
 
@@ -262,5 +272,9 @@ pub fn compute_all_travel_times(
         to_dessert[nh] = cache.get_or_fetch(&people[nh].address, dessert_address, cfg)?;
     }
 
-    Ok(TravelMatrix { n, home_to, to_dessert })
+    Ok(TravelMatrix {
+        n,
+        home_to,
+        to_dessert,
+    })
 }

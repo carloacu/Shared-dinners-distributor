@@ -36,11 +36,19 @@ pub fn write_result(
         out.push_str(&format!("Chez {} ({})\n", host.name, host.address));
         let ages: Vec<u32> = guests.iter().map(|g| people[*g].age()).collect();
         let mean_age = ages.iter().sum::<u32>() as f64 / ages.len() as f64;
-        out.push_str(&format!("  Invites ({} personnes, age moyen {:.1} ans):\n", guests.len(), mean_age));
+        out.push_str(&format!(
+            "  Invites ({} personnes, age moyen {:.1} ans):\n",
+            guests.len(),
+            mean_age
+        ));
         for g in guests {
             let walk_mins = travel.home_to[*g][*host_idx] / 60.0;
-            out.push_str(&format!("    - {} ({}ans) marche: {:.1} min\n",
-                people[*g].name, people[*g].age(), walk_mins));
+            out.push_str(&format!(
+                "    - {} ({}ans) marche: {:.1} min\n",
+                people[*g].name,
+                people[*g].age(),
+                walk_mins
+            ));
         }
         out.push('\n');
     }
@@ -58,13 +66,26 @@ pub fn write_result(
         out.push_str(&format!("Chez {} ({})\n", host.name, host.address));
         let ages: Vec<u32> = guests.iter().map(|g| people[*g].age()).collect();
         let mean_age = ages.iter().sum::<u32>() as f64 / ages.len() as f64;
-        out.push_str(&format!("  Invites ({} personnes, age moyen {:.1} ans):\n", guests.len(), mean_age));
+        out.push_str(&format!(
+            "  Invites ({} personnes, age moyen {:.1} ans):\n",
+            guests.len(),
+            mean_age
+        ));
         for g in guests {
             let drinks_h = sol.drinks_host[*g];
             let walk_mins = travel.home_to[drinks_h][*host_idx] / 60.0;
-            let same = if drinks_h == *host_idx { " [MEME HOTE QU'A L'APERO]" } else { "" };
-            out.push_str(&format!("    - {} ({}ans) depuis apero: {:.1} min{}\n",
-                people[*g].name, people[*g].age(), walk_mins, same));
+            let same = if drinks_h == *host_idx {
+                " [MEME HOTE QU'A L'APERO]"
+            } else {
+                ""
+            };
+            out.push_str(&format!(
+                "    - {} ({}ans) depuis apero: {:.1} min{}\n",
+                people[*g].name,
+                people[*g].age(),
+                walk_mins,
+                same
+            ));
         }
         out.push('\n');
     }
@@ -75,8 +96,10 @@ pub fn write_result(
     for i in 0..n {
         let dh = sol.dinner_host[i];
         let walk = travel.to_dessert[dh] / 60.0;
-        out.push_str(&format!("  {} : {:.1} min depuis chez {}\n",
-            people[i].name, walk, people[dh].name));
+        out.push_str(&format!(
+            "  {} : {:.1} min depuis chez {}\n",
+            people[i].name, walk, people[dh].name
+        ));
     }
 
     // SUMMARY
@@ -98,7 +121,10 @@ pub fn write_result(
             leg3, total
         ));
     }
-    out.push_str(&format!("\nTemps de marche total : {:.1} min\n", total_walk));
+    out.push_str(&format!(
+        "\nTemps de marche total : {:.1} min\n",
+        total_walk
+    ));
 
     fs::write(path, &out)?;
     Ok(())
@@ -113,9 +139,14 @@ pub fn write_result_csv(sol: &Solution, people: &[Person], path: &str) -> Result
     for i in 0..n {
         let dh = sol.drinks_host[i];
         let nh = sol.dinner_host[i];
-        out.push_str(&format!("{},{},{},{},{},dessert commun\n",
-            people[i].name, people[i].year_of_birth, people[i].group_id,
-            people[dh].name, people[nh].name));
+        out.push_str(&format!(
+            "{},{},{},{},{},dessert commun\n",
+            people[i].name,
+            people[i].year_of_birth,
+            people[i].group_id,
+            people[dh].name,
+            people[nh].name
+        ));
     }
     fs::write(path, &out)?;
     Ok(())

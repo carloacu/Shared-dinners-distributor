@@ -1,8 +1,8 @@
 mod config;
 mod geo;
 mod model;
-mod solver;
 mod output;
+mod solver;
 
 use anyhow::Result;
 use chrono::Local;
@@ -74,7 +74,14 @@ fn main() -> Result<()> {
 
     // 6. Simulated annealing optimization
     info!("Starting simulated annealing...");
-    let best = solver::simulated_annealing(initial, &people, &hosts_drinks, &hosts_dinner, &travel, &cfg)?;
+    let best = solver::simulated_annealing(
+        initial,
+        &people,
+        &hosts_drinks,
+        &hosts_dinner,
+        &travel,
+        &cfg,
+    )?;
     let best_score = solver::evaluate(&best, &people, &travel, &cfg);
     info!("Best score after SA: {:.4}", best_score);
 

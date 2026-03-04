@@ -67,7 +67,10 @@ impl Person {
 }
 
 fn parse_yes_no(value: &str) -> bool {
-    matches!(value.trim().to_lowercase().as_str(), "yes" | "y" | "true" | "1")
+    matches!(
+        value.trim().to_lowercase().as_str(),
+        "yes" | "y" | "true" | "1"
+    )
 }
 
 pub fn load_people(path: &str) -> Result<Vec<Person>> {
