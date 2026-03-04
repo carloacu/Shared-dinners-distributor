@@ -90,7 +90,7 @@ ws.sheet_view.showGridLines = False
 ws.freeze_panes = "A3"
 
 ws.merge_cells("A1:G1")
-ws["A1"] = f"🎉 {event_title.upper()} — REPARTITION FINALE"
+ws["A1"] = f"🎉 {event_title.upper()} — SUGGESTION"
 ws["A1"].font = Font(name='Arial', bold=True, size=17, color='FFFFFF')
 ws["A1"].fill = fill("0B132B"); ws["A1"].alignment = ctr()
 ws.row_dimensions[1].height = 40
