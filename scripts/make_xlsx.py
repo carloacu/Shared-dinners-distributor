@@ -265,7 +265,7 @@ for host,guests in dinner_groups.items():
 # ═══ SHEET 4 — Stats ═════════════════════════════════════════════════════════
 ws5=wb.create_sheet("Statistiques")
 ws5.sheet_view.showGridLines=False
-for col,w in zip([1,2,3],[36,22,26]): cw(ws5,col,w)
+for col,w in zip([1,2,3],[36,22,30]): cw(ws5,col,w)
 ws5.merge_cells("A1:C1")
 ws5["A1"]="📈 STATISTIQUES"
 ws5["A1"].font=Font(name='Arial',bold=True,size=14,color='FFFFFF')
@@ -323,6 +323,10 @@ for ri,(a,b,c) in enumerate(stats,2):
         else:
             cell.font=cfont(bold=(ci==1),size=10)
             cell.fill=fill("F5F5F5" if ri%2==0 else "FFFFFF"); cell.alignment=lft() if ci==1 else ctr()
+
+# Auto-size the last stats column to fit labels like "depuis chez ...".
+max_col3_len = max((len(str(c or "")) for _, _, c in stats), default=0)
+cw(ws5, 3, max(30, min(60, max_col3_len + 4)))
 
 out_dir = os.path.dirname(out)
 if out_dir:
