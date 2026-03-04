@@ -19,7 +19,9 @@ impl DistCache {
     pub fn load(path: &str) -> Result<Self> {
         if Path::new(path).exists() {
             let content = fs::read_to_string(path)?;
-            Ok(serde_json::from_str(&content).unwrap_or_default())
+            let mut cache: DistCache = serde_json::from_str(&content).unwrap_or_default();
+            cache.canonicalize_entries();
+            Ok(cache)
         } else {
             Ok(DistCache::default())
         }
@@ -34,20 +36,65 @@ impl DistCache {
         Ok(())
     }
 
+    fn normalize_address(address: &str) -> String {
+        let mut out = String::with_capacity(address.len());
+        let mut prev_sep = false;
+
+        for ch in address.to_lowercase().chars() {
+            if ch.is_alphanumeric() {
+                out.push(ch);
+                prev_sep = false;
+            } else if !prev_sep && !out.is_empty() {
+                out.push(' ');
+                prev_sep = true;
+            }
+        }
+
+        out.trim().to_string()
+    }
+
     fn key(from: &str, to: &str) -> String {
+        format!(
+            "{}|||{}",
+            Self::normalize_address(from),
+            Self::normalize_address(to)
+        )
+    }
+
+    fn raw_key(from: &str, to: &str) -> String {
         format!("{}|||{}", from, to)
     }
 
     fn symmetric_key(a: &str, b: &str) -> String {
-        if a <= b {
-            Self::key(a, b)
+        let na = Self::normalize_address(a);
+        let nb = Self::normalize_address(b);
+        if na <= nb {
+            format!("{}|||{}", na, nb)
         } else {
-            Self::key(b, a)
+            format!("{}|||{}", nb, na)
         }
     }
 
+    fn canonicalize_entries(&mut self) {
+        let mut canonical = HashMap::with_capacity(self.entries.len());
+        for (k, v) in self.entries.drain() {
+            if let Some((from, to)) = k.split_once("|||") {
+                let ck = Self::symmetric_key(from, to);
+                canonical
+                    .entry(ck)
+                    .and_modify(|existing| {
+                        if v < *existing {
+                            *existing = v;
+                        }
+                    })
+                    .or_insert(v);
+            }
+        }
+        self.entries = canonical;
+    }
+
     pub fn get_or_fetch(&mut self, from: &str, to: &str, cfg: &Config) -> Result<f64> {
-        if from == to {
+        if Self::normalize_address(from) == Self::normalize_address(to) {
             return Ok(0.0);
         }
 
@@ -65,6 +112,18 @@ impl DistCache {
         }
         let reverse = Self::key(to, from);
         if let Some(v) = self.entries.get(&reverse).copied() {
+            self.entries.insert(symmetric, v);
+            return Ok(v);
+        }
+
+        // Extra fallback for pre-normalization cache files.
+        let forward_raw = Self::raw_key(from, to);
+        if let Some(v) = self.entries.get(&forward_raw).copied() {
+            self.entries.insert(symmetric, v);
+            return Ok(v);
+        }
+        let reverse_raw = Self::raw_key(to, from);
+        if let Some(v) = self.entries.get(&reverse_raw).copied() {
             self.entries.insert(symmetric, v);
             return Ok(v);
         }

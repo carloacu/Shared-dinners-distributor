@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate a formatted Excel report from CSV input to XLSX output."""
 
-import sys, os
+import sys, os, re
 
 missing = []
 for pkg, imp in [("openpyxl","openpyxl"),("pyyaml","yaml")]:
@@ -58,9 +58,37 @@ dist = {}
 if os.path.exists(cache_path):
     dist = json.load(open(cache_path)).get('entries', {})
 
+def normalize_address(address):
+    s = (address or '').lower()
+    s = s.replace('-', ' ').replace('_', ' ')
+    s = re.sub(r'[^\w\s]', ' ', s, flags=re.UNICODE)
+    s = re.sub(r'\s+', ' ', s).strip()
+    return s
+
+def canonical_cache_key(addr_a, addr_b):
+    a = normalize_address(addr_a)
+    b = normalize_address(addr_b)
+    return f"{a}|||{b}" if a <= b else f"{b}|||{a}"
+
+# Build normalization-insensitive index from existing cache entries.
+dist_normalized = {}
+for k, v in dist.items():
+    if '|||' not in k:
+        continue
+    left, right = k.split('|||', 1)
+    ck = canonical_cache_key(left, right)
+    if ck not in dist_normalized or v < dist_normalized[ck]:
+        dist_normalized[ck] = v
+
 def walk(addr_from, addr_to):
     """Return walk time in minutes from cache, or 0 if not found."""
-    if addr_from == addr_to: return 0.0
+    if normalize_address(addr_from) == normalize_address(addr_to):
+        return 0.0
+
+    key = canonical_cache_key(addr_from, addr_to)
+    if key in dist_normalized:
+        return round(dist_normalized[key] / 60.0, 1)
+
     # Walking time is assumed symmetric: A->B == B->A.
     key = f"{addr_from}|||{addr_to}" if addr_from <= addr_to else f"{addr_to}|||{addr_from}"
     if key in dist:
