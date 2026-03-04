@@ -6,6 +6,7 @@ use log::info;
 use rand::prelude::*;
 use std::collections::HashMap;
 use std::thread;
+use std::time::{Duration, Instant};
 
 // ─── Solution representation ─────────────────────────────────────────────────
 
@@ -447,14 +448,14 @@ fn assign_groups_to_hosts(
     }
 
     let mut is_owner_group = vec![false; group_sizes.len()];
-    for (_slot, &owner_group) in host_owner_group.iter().enumerate() {
+    for &owner_group in host_owner_group {
         if owner_group < is_owner_group.len() {
             is_owner_group[owner_group] = true;
         }
     }
 
-    // Fast path: randomized greedy construction with restart budget.
-    let greedy_restarts = if group_sizes.len() <= 40 { 32 } else { 96 };
+    // Fast path: randomized greedy construction.
+    let greedy_restarts = if group_sizes.len() <= 50 { 64 } else { 192 };
     let mut rng = rand::thread_rng();
     for _ in 0..greedy_restarts {
         if let Some(group_slot_assign) = greedy_assign_groups_to_host_slots(
@@ -479,14 +480,22 @@ fn assign_groups_to_hosts(
         }
     }
 
-    // Fallback: bounded DFS with stronger pruning and randomized restarts.
-    let backtrack_restarts = if group_sizes.len() <= 40 { 24 } else { 48 };
-    let node_budget_per_restart = if group_sizes.len() <= 40 {
-        500_000
+    // Fallback: adaptive DFS with MRV ordering until timeout.
+    let timeout_secs = std::env::var("PD_INIT_TIMEOUT_SECS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .filter(|&v| v > 0)
+        .unwrap_or(if group_sizes.len() <= 50 { 20 } else { 45 });
+    let search_timeout = Duration::from_secs(timeout_secs);
+    let search_start = Instant::now();
+    let mut restart = 0usize;
+    let node_budget_per_restart = if group_sizes.len() <= 50 {
+        5_000_000
     } else {
-        200_000
+        2_500_000
     };
-    for restart in 0..backtrack_restarts {
+    while search_start.elapsed() < search_timeout {
+        restart += 1;
         let mut order: Vec<usize> = (0..group_sizes.len()).collect();
         let jitter: Vec<u32> = (0..group_sizes.len()).map(|_| rng.gen()).collect();
         order.sort_by_key(|&gi| {
@@ -504,12 +513,13 @@ fn assign_groups_to_hosts(
 
         if backtrack_assign_groups(
             0,
-            &order,
+            &mut order,
             group_sizes,
             group_need_pmr,
             host_caps,
             host_can_pmr,
             host_owner_group,
+            &is_owner_group,
             min_guests,
             &mut counts,
             &mut assigned_group_slot,
@@ -520,6 +530,8 @@ fn assign_groups_to_hosts(
             0,
             &mut nodes_left,
             restart > 0,
+            search_start,
+            search_timeout,
             &mut rng,
         ) {
             let assignment: Vec<usize> = assigned_group_slot
@@ -531,8 +543,11 @@ fn assign_groups_to_hosts(
     }
 
     info!(
-        "Systematic assignment exhausted search budget (greedy restarts={} | backtracking restarts={} | node budget/restart={})",
-        greedy_restarts, backtrack_restarts, node_budget_per_restart
+        "Systematic assignment timed out after {:.2}s (greedy restarts={} | backtracking restarts={} | node budget/restart={} | hint: increase PD_INIT_TIMEOUT_SECS)",
+        search_start.elapsed().as_secs_f64(),
+        greedy_restarts,
+        restart,
+        node_budget_per_restart
     );
     None
 }
@@ -671,12 +686,13 @@ fn greedy_assign_groups_to_host_slots(
 
 fn backtrack_assign_groups(
     pos: usize,
-    order: &[usize],
+    order: &mut [usize],
     group_sizes: &[usize],
     group_need_pmr: &[bool],
     host_caps: &[usize],
     host_can_pmr: &[bool],
     host_owner_group: &[usize],
+    is_owner_group: &[bool],
     min_guests: usize,
     counts: &mut [usize],
     assigned_group_slot: &mut [usize],
@@ -687,8 +703,13 @@ fn backtrack_assign_groups(
     deficit_sum: usize,
     nodes_left: &mut usize,
     randomize_values: bool,
+    search_start: Instant,
+    search_timeout: Duration,
     rng: &mut impl Rng,
 ) -> bool {
+    if search_start.elapsed() >= search_timeout {
+        return false;
+    }
     if *nodes_left == 0 {
         return false;
     }
@@ -696,6 +717,51 @@ fn backtrack_assign_groups(
 
     if pos == order.len() {
         return deficit_sum == 0;
+    }
+
+    // Minimum Remaining Values: choose the most constrained unassigned group.
+    let mut best_idx = pos;
+    let mut best_domain = usize::MAX;
+    for idx in pos..order.len() {
+        let candidate_gi = order[idx];
+        let gsize = group_sizes[candidate_gi];
+        let need_pmr = group_need_pmr[candidate_gi];
+        let mut domain = 0usize;
+        for host_slot in 0..host_caps.len() {
+            if can_assign_group_to_host(
+                candidate_gi,
+                host_slot,
+                gsize,
+                need_pmr,
+                counts,
+                assigned_group_slot,
+                host_caps,
+                host_can_pmr,
+                host_owner_group,
+            ) {
+                domain += 1;
+            }
+        }
+        if domain == 0 {
+            return false;
+        }
+        if domain < best_domain
+            || (domain == best_domain
+                && (is_owner_group[candidate_gi], group_sizes[candidate_gi])
+                    > (
+                        is_owner_group[order[best_idx]],
+                        group_sizes[order[best_idx]],
+                    ))
+        {
+            best_domain = domain;
+            best_idx = idx;
+        }
+        if best_domain == 1 {
+            break;
+        }
+    }
+    if best_idx != pos {
+        order.swap(pos, best_idx);
     }
 
     let gi = order[pos];
@@ -773,6 +839,7 @@ fn backtrack_assign_groups(
             host_caps,
             host_can_pmr,
             host_owner_group,
+            is_owner_group,
             min_guests,
             counts,
             assigned_group_slot,
@@ -783,6 +850,8 @@ fn backtrack_assign_groups(
             next_deficit_sum,
             nodes_left,
             randomize_values,
+            search_start,
+            search_timeout,
             rng,
         ) {
             return true;
@@ -792,6 +861,9 @@ fn backtrack_assign_groups(
         assigned_group_slot[gi] = usize::MAX;
     }
 
+    if best_idx != pos {
+        order.swap(pos, best_idx);
+    }
     false
 }
 
@@ -807,6 +879,9 @@ fn can_assign_group_to_host(
     host_owner_group: &[usize],
 ) -> bool {
     let owner_group = host_owner_group[host_slot];
+    if owner_group >= assigned_group_slot.len() {
+        return false;
+    }
     if owner_group != group_idx && assigned_group_slot[owner_group] != host_slot {
         return false;
     }
