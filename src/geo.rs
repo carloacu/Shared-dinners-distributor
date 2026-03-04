@@ -13,6 +13,8 @@ use std::path::Path;
 pub struct DistCache {
     /// Key: unordered pair "min(adresse A, adresse B)|||max(...)"  →  walking seconds
     pub entries: HashMap<String, f64>,
+    #[serde(skip)]
+    persist_path: Option<String>,
 }
 
 impl DistCache {
@@ -21,9 +23,13 @@ impl DistCache {
             let content = fs::read_to_string(path)?;
             let mut cache: DistCache = serde_json::from_str(&content).unwrap_or_default();
             cache.canonicalize_entries();
+            cache.persist_path = Some(path.to_string());
             Ok(cache)
         } else {
-            Ok(DistCache::default())
+            Ok(DistCache {
+                entries: HashMap::new(),
+                persist_path: Some(path.to_string()),
+            })
         }
     }
 
@@ -136,6 +142,9 @@ impl DistCache {
             fetch_ors_seconds_by_address(from, to, &cfg.ors_api_key)?
         };
         self.entries.insert(symmetric, secs);
+        if let Some(path) = self.persist_path.as_deref() {
+            self.save(&path)?;
+        }
         Ok(secs)
     }
 }
