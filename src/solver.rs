@@ -111,7 +111,39 @@ pub fn is_valid(sol: &Solution, people: &[Person], cfg: &Config) -> bool {
         }
     }
 
+    // 7. One physical venue cannot host multiple groups for the same event.
+    // This also prevents duplicated person rows at the same address from hosting twice.
+    let mut drinks_addr_used: HashMap<String, usize> = HashMap::new();
+    for &host_idx in drinks_count.keys() {
+        let key = normalize_address_key(&people[host_idx].address);
+        if let Some(prev_host) = drinks_addr_used.insert(key, host_idx) {
+            if prev_host != host_idx {
+                return false;
+            }
+        }
+    }
+
+    let mut dinner_addr_used: HashMap<String, usize> = HashMap::new();
+    for &host_idx in dinner_count.keys() {
+        let key = normalize_address_key(&people[host_idx].address);
+        if let Some(prev_host) = dinner_addr_used.insert(key, host_idx) {
+            if prev_host != host_idx {
+                return false;
+            }
+        }
+    }
+
     true
+}
+
+fn normalize_address_key(address: &str) -> String {
+    let mut key = String::with_capacity(address.len());
+    for c in address.chars().flat_map(|c| c.to_lowercase()) {
+        if c.is_alphanumeric() {
+            key.push(c);
+        }
+    }
+    key
 }
 
 // ─── Objective function (lower = better) ─────────────────────────────────────

@@ -7,6 +7,7 @@ mod solver;
 use anyhow::Result;
 use chrono::Local;
 use log::info;
+use std::collections::HashMap;
 use std::env;
 
 fn main() -> Result<()> {
@@ -43,6 +44,8 @@ fn main() -> Result<()> {
         .filter(|(_, p)| p.receiving_for_dinner)
         .map(|(i, _)| i)
         .collect();
+    let hosts_drinks = dedupe_hosts_by_address(&people, &hosts_drinks, true);
+    let hosts_dinner = dedupe_hosts_by_address(&people, &hosts_dinner, false);
 
     info!(
         "Drinks hosts: {} | Dinner hosts: {}",
@@ -134,4 +137,52 @@ fn main() -> Result<()> {
 
     info!("Done! Results written to data/output/");
     Ok(())
+}
+
+fn dedupe_hosts_by_address(
+    people: &[model::Person],
+    hosts: &[usize],
+    for_drinks: bool,
+) -> Vec<usize> {
+    let mut best_by_addr: HashMap<String, usize> = HashMap::new();
+
+    for &idx in hosts {
+        let key = normalize_address_key(&people[idx].address);
+        let replace = match best_by_addr.get(&key).copied() {
+            None => true,
+            Some(existing) => {
+                let candidate = &people[idx];
+                let current = &people[existing];
+                let cand_cap = if for_drinks {
+                    candidate.max_guests_drinks
+                } else {
+                    candidate.max_guests_dinner
+                };
+                let curr_cap = if for_drinks {
+                    current.max_guests_drinks
+                } else {
+                    current.max_guests_dinner
+                };
+                (candidate.can_host_pmr as u8, cand_cap, usize::MAX - idx)
+                    > (current.can_host_pmr as u8, curr_cap, usize::MAX - existing)
+            }
+        };
+        if replace {
+            best_by_addr.insert(key, idx);
+        }
+    }
+
+    let mut deduped: Vec<usize> = best_by_addr.into_values().collect();
+    deduped.sort_unstable();
+    deduped
+}
+
+fn normalize_address_key(address: &str) -> String {
+    let mut key = String::with_capacity(address.len());
+    for c in address.chars().flat_map(|c| c.to_lowercase()) {
+        if c.is_alphanumeric() {
+            key.push(c);
+        }
+    }
+    key
 }
