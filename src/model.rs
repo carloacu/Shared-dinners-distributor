@@ -19,8 +19,6 @@ struct CsvRow {
     recieving_for_dinner: String,
     number_max_recieving_for_dinner: usize,
     #[serde(default)]
-    need_pmr: String,
-    #[serde(default)]
     can_host_pmr: String,
 }
 
@@ -32,6 +30,8 @@ struct ConstraintCsvRow {
     must_receive_drinks_from: String,
     #[serde(default)]
     must_receive_dinner_from: String,
+    #[serde(default)]
+    need_pmr: String,
 }
 
 /// A person (one row in the CSV)
@@ -48,7 +48,6 @@ pub struct Person {
     pub max_guests_drinks: usize,
     pub receiving_for_dinner: bool,
     pub max_guests_dinner: usize,
-    pub need_pmr: bool,
     pub can_host_pmr: bool,
 }
 
@@ -57,6 +56,7 @@ pub struct PersonConstraint {
     pub person_name: String,
     pub must_receive_drinks_from: Option<String>,
     pub must_receive_dinner_from: Option<String>,
+    pub need_pmr: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,7 +113,6 @@ pub fn load_people(path: &str) -> Result<Vec<Person>> {
             max_guests_drinks: row.number_max_recieving_for_drinks,
             receiving_for_dinner: parse_yes_no(&row.recieving_for_dinner),
             max_guests_dinner: row.number_max_recieving_for_dinner,
-            need_pmr: parse_yes_no(&row.need_pmr),
             can_host_pmr: parse_yes_no(&row.can_host_pmr),
         });
     }
@@ -132,10 +131,12 @@ pub fn load_constraints(path: &str) -> Result<Vec<PersonConstraint>> {
         }
         let must_receive_drinks_from = normalize_optional_string(&row.must_receive_drinks_from);
         let must_receive_dinner_from = normalize_optional_string(&row.must_receive_dinner_from);
+        let need_pmr = parse_yes_no(&row.need_pmr);
         constraints.push(PersonConstraint {
             person_name,
             must_receive_drinks_from,
             must_receive_dinner_from,
+            need_pmr,
         });
     }
 

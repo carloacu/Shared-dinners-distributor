@@ -24,6 +24,7 @@ pub struct Solution {
 pub struct PersonHostConstraint {
     pub drinks_host: Option<usize>,
     pub dinner_host: Option<usize>,
+    pub need_pmr: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -45,7 +46,7 @@ impl ResolvedConstraints {
     pub fn is_empty(&self) -> bool {
         self.per_person
             .iter()
-            .all(|c| c.drinks_host.is_none() && c.dinner_host.is_none())
+            .all(|c| c.drinks_host.is_none() && c.dinner_host.is_none() && !c.need_pmr)
     }
 }
 
@@ -104,6 +105,9 @@ pub fn resolve_constraints(
             }
             merge_dinner_constraint(&mut resolved.per_person[person_idx], host_idx, people)?;
         }
+        if c.need_pmr {
+            resolved.per_person[person_idx].need_pmr = true;
+        }
     }
 
     // Same group ID must share assignments; constraints must therefore be group-consistent.
@@ -124,6 +128,7 @@ pub fn resolve_constraints(
             people,
             "dinner",
         )?;
+        let group_need_pmr = members.iter().any(|&i| resolved.per_person[i].need_pmr);
 
         for &member in &members {
             if let Some(h) = forced_drinks {
@@ -131,6 +136,9 @@ pub fn resolve_constraints(
             }
             if let Some(h) = forced_dinner {
                 resolved.per_person[member].dinner_host = Some(h);
+            }
+            if group_need_pmr {
+                resolved.per_person[member].need_pmr = true;
             }
         }
     }
@@ -285,19 +293,7 @@ pub fn is_valid(sol: &Solution, people: &[Person], cfg: &Config) -> bool {
         }
     }
 
-    // 4. PMR accessibility: if a person needs PMR, both assigned hosts must be PMR-accessible
-    for i in 0..n {
-        if people[i].need_pmr {
-            if !people[sol.drinks_host[i]].can_host_pmr {
-                return false;
-            }
-            if !people[sol.dinner_host[i]].can_host_pmr {
-                return false;
-            }
-        }
-    }
-
-    // 5. Same group ID → same drinks host AND same dinner host
+    // 4. Same group ID → same drinks host AND same dinner host
     for i in 0..n {
         for j in (i + 1)..n {
             if people[i].group_id == people[j].group_id {
@@ -311,7 +307,7 @@ pub fn is_valid(sol: &Solution, people: &[Person], cfg: &Config) -> bool {
         }
     }
 
-    // 6. Capacity constraints: count guests per host
+    // 5. Capacity constraints: count guests per host
     // For drinks
     let mut drinks_count: HashMap<usize, usize> = HashMap::new();
     for i in 0..n {
@@ -336,7 +332,7 @@ pub fn is_valid(sol: &Solution, people: &[Person], cfg: &Config) -> bool {
         }
     }
 
-    // 7. One physical venue cannot host multiple groups for the same event.
+    // 6. One physical venue cannot host multiple groups for the same event.
     // This also prevents duplicated person rows at the same address from hosting twice.
     let mut drinks_addr_used: HashMap<String, usize> = HashMap::new();
     for &host_idx in drinks_count.keys() {
@@ -367,10 +363,14 @@ pub fn is_valid_with_constraints(
     cfg: &Config,
     constraints: &ResolvedConstraints,
 ) -> bool {
-    is_valid(sol, people, cfg) && satisfies_constraints(sol, constraints)
+    is_valid(sol, people, cfg) && satisfies_constraints(sol, people, constraints)
 }
 
-fn satisfies_constraints(sol: &Solution, constraints: &ResolvedConstraints) -> bool {
+fn satisfies_constraints(
+    sol: &Solution,
+    people: &[Person],
+    constraints: &ResolvedConstraints,
+) -> bool {
     for (i, c) in constraints.per_person.iter().enumerate() {
         if let Some(h) = c.drinks_host {
             if sol.drinks_host[i] != h {
@@ -379,6 +379,14 @@ fn satisfies_constraints(sol: &Solution, constraints: &ResolvedConstraints) -> b
         }
         if let Some(h) = c.dinner_host {
             if sol.dinner_host[i] != h {
+                return false;
+            }
+        }
+        if c.need_pmr {
+            if !people[sol.drinks_host[i]].can_host_pmr {
+                return false;
+            }
+            if !people[sol.dinner_host[i]].can_host_pmr {
                 return false;
             }
         }
@@ -521,24 +529,6 @@ pub fn find_initial_solution(
     }
     if hosts_dinner.is_empty() {
         return Err(anyhow!("No dinner hosts found"));
-    }
-
-    // Fast feasibility check for PMR constraints.
-    if people.iter().any(|p| p.need_pmr) {
-        let has_pmr_drinks_host = hosts_drinks.iter().any(|&h| people[h].can_host_pmr);
-        let has_pmr_dinner_host = hosts_dinner.iter().any(|&h| people[h].can_host_pmr);
-        if !has_pmr_drinks_host || !has_pmr_dinner_host {
-            return Err(anyhow!(
-                "PMR constraint infeasible: at least one person needs PMR, but there is no PMR-accessible host for {}",
-                if !has_pmr_drinks_host && !has_pmr_dinner_host {
-                    "drinks and dinner"
-                } else if !has_pmr_drinks_host {
-                    "drinks"
-                } else {
-                    "dinner"
-                }
-            ));
-        }
     }
 
     let mut drinks_host = vec![0usize; n];
@@ -816,7 +806,7 @@ fn constraint_penalty(
         if !people[nh].receiving_for_dinner {
             penalty += 20_000;
         }
-        if people[i].need_pmr {
+        if constraints.per_person[i].need_pmr {
             if !people[dh].can_host_pmr {
                 penalty += 5_000;
             }
@@ -963,10 +953,7 @@ fn systematic_initial_with_forced(
         .map(|(_, rep)| group_members(people, *rep))
         .collect();
     let group_sizes: Vec<usize> = group_members_list.iter().map(|m| m.len()).collect();
-    let group_need_pmr: Vec<bool> = group_members_list
-        .iter()
-        .map(|members| members.iter().any(|&i| people[i].need_pmr))
-        .collect();
+    let group_need_pmr: Vec<bool> = vec![false; group_members_list.len()];
     let mut group_idx_by_person = vec![usize::MAX; n];
     for (gi, members) in group_members_list.iter().enumerate() {
         for &member in members {
