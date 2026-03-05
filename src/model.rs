@@ -24,6 +24,16 @@ struct CsvRow {
     can_host_pmr: String,
 }
 
+/// Raw constraints CSV row
+#[derive(Debug, Deserialize)]
+struct ConstraintCsvRow {
+    person_name: String,
+    #[serde(default)]
+    must_receive_drinks_from: String,
+    #[serde(default)]
+    must_receive_dinner_from: String,
+}
+
 /// A person (one row in the CSV)
 #[derive(Debug, Clone)]
 pub struct Person {
@@ -40,6 +50,13 @@ pub struct Person {
     pub max_guests_dinner: usize,
     pub need_pmr: bool,
     pub can_host_pmr: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct PersonConstraint {
+    pub person_name: String,
+    pub must_receive_drinks_from: Option<String>,
+    pub must_receive_dinner_from: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,6 +118,37 @@ pub fn load_people(path: &str) -> Result<Vec<Person>> {
         });
     }
     Ok(people)
+}
+
+pub fn load_constraints(path: &str) -> Result<Vec<PersonConstraint>> {
+    let mut rdr = csv::Reader::from_path(path)?;
+    let mut constraints = Vec::new();
+
+    for result in rdr.deserialize() {
+        let row: ConstraintCsvRow = result?;
+        let person_name = row.person_name.trim().to_string();
+        if person_name.is_empty() {
+            continue;
+        }
+        let must_receive_drinks_from = normalize_optional_string(&row.must_receive_drinks_from);
+        let must_receive_dinner_from = normalize_optional_string(&row.must_receive_dinner_from);
+        constraints.push(PersonConstraint {
+            person_name,
+            must_receive_drinks_from,
+            must_receive_dinner_from,
+        });
+    }
+
+    Ok(constraints)
+}
+
+fn normalize_optional_string(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 /// Returns the indices of persons sharing the same group_id as `idx`

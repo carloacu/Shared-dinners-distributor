@@ -1,10 +1,10 @@
 use crate::config::Config;
 use crate::geo::TravelMatrix;
-use crate::model::{group_members, unique_groups, Gender, Person};
+use crate::model::{group_members, unique_groups, Gender, Person, PersonConstraint};
 use anyhow::{anyhow, Result};
 use log::info;
 use rand::prelude::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -18,6 +18,231 @@ pub struct Solution {
     pub drinks_host: Vec<usize>,
     /// dinner_host[i] = index of the dinner host for person i
     pub dinner_host: Vec<usize>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PersonHostConstraint {
+    pub drinks_host: Option<usize>,
+    pub dinner_host: Option<usize>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ResolvedConstraints {
+    pub per_person: Vec<PersonHostConstraint>,
+    pub required_drinks_hosts: Vec<usize>,
+    pub required_dinner_hosts: Vec<usize>,
+}
+
+impl ResolvedConstraints {
+    pub fn empty(people_len: usize) -> Self {
+        Self {
+            per_person: vec![PersonHostConstraint::default(); people_len],
+            required_drinks_hosts: Vec::new(),
+            required_dinner_hosts: Vec::new(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.per_person
+            .iter()
+            .all(|c| c.drinks_host.is_none() && c.dinner_host.is_none())
+    }
+}
+
+pub fn resolve_constraints(
+    people: &[Person],
+    constraints: &[PersonConstraint],
+) -> Result<ResolvedConstraints> {
+    let n = people.len();
+    let mut resolved = ResolvedConstraints::empty(n);
+    if constraints.is_empty() {
+        return Ok(resolved);
+    }
+
+    let mut people_by_name: HashMap<String, Vec<usize>> = HashMap::new();
+    for (idx, person) in people.iter().enumerate() {
+        people_by_name
+            .entry(normalize_person_name_key(&person.name))
+            .or_default()
+            .push(idx);
+    }
+
+    for c in constraints {
+        let person_idx = resolve_unique_person_index(
+            &people_by_name,
+            &c.person_name,
+            people,
+            "constraint person_name",
+        )?;
+        if let Some(host_name) = &c.must_receive_drinks_from {
+            let host_idx = resolve_unique_person_index(
+                &people_by_name,
+                host_name,
+                people,
+                "must_receive_drinks_from",
+            )?;
+            if !people[host_idx].receiving_for_drinks {
+                return Err(anyhow!(
+                    "Invalid constraint: '{}' is not a drinks host",
+                    people[host_idx].name
+                ));
+            }
+            merge_drinks_constraint(&mut resolved.per_person[person_idx], host_idx, people)?;
+        }
+        if let Some(host_name) = &c.must_receive_dinner_from {
+            let host_idx = resolve_unique_person_index(
+                &people_by_name,
+                host_name,
+                people,
+                "must_receive_dinner_from",
+            )?;
+            if !people[host_idx].receiving_for_dinner {
+                return Err(anyhow!(
+                    "Invalid constraint: '{}' is not a dinner host",
+                    people[host_idx].name
+                ));
+            }
+            merge_dinner_constraint(&mut resolved.per_person[person_idx], host_idx, people)?;
+        }
+    }
+
+    // Same group ID must share assignments; constraints must therefore be group-consistent.
+    for (_, rep) in unique_groups(people) {
+        let members = group_members(people, rep);
+
+        let forced_drinks = unique_forced_host(
+            members
+                .iter()
+                .filter_map(|&i| resolved.per_person[i].drinks_host),
+            people,
+            "drinks",
+        )?;
+        let forced_dinner = unique_forced_host(
+            members
+                .iter()
+                .filter_map(|&i| resolved.per_person[i].dinner_host),
+            people,
+            "dinner",
+        )?;
+
+        for &member in &members {
+            if let Some(h) = forced_drinks {
+                resolved.per_person[member].drinks_host = Some(h);
+            }
+            if let Some(h) = forced_dinner {
+                resolved.per_person[member].dinner_host = Some(h);
+            }
+        }
+    }
+
+    let mut drinks_hosts = HashSet::new();
+    let mut dinner_hosts = HashSet::new();
+    for c in &resolved.per_person {
+        if let Some(h) = c.drinks_host {
+            drinks_hosts.insert(h);
+        }
+        if let Some(h) = c.dinner_host {
+            dinner_hosts.insert(h);
+        }
+    }
+    let mut required_drinks_hosts: Vec<usize> = drinks_hosts.into_iter().collect();
+    let mut required_dinner_hosts: Vec<usize> = dinner_hosts.into_iter().collect();
+    required_drinks_hosts.sort_unstable();
+    required_dinner_hosts.sort_unstable();
+    resolved.required_drinks_hosts = required_drinks_hosts;
+    resolved.required_dinner_hosts = required_dinner_hosts;
+
+    Ok(resolved)
+}
+
+fn resolve_unique_person_index(
+    people_by_name: &HashMap<String, Vec<usize>>,
+    raw_name: &str,
+    people: &[Person],
+    field_name: &str,
+) -> Result<usize> {
+    let key = normalize_person_name_key(raw_name);
+    let matches = people_by_name
+        .get(&key)
+        .ok_or_else(|| anyhow!("Unknown person '{}' in {}", raw_name, field_name))?;
+
+    if matches.len() != 1 {
+        let names: Vec<String> = matches.iter().map(|&i| people[i].name.clone()).collect();
+        return Err(anyhow!(
+            "Ambiguous person '{}' in {} (matches: {})",
+            raw_name,
+            field_name,
+            names.join(", ")
+        ));
+    }
+
+    Ok(matches[0])
+}
+
+fn merge_drinks_constraint(
+    existing: &mut PersonHostConstraint,
+    host_idx: usize,
+    people: &[Person],
+) -> Result<()> {
+    if let Some(current) = existing.drinks_host {
+        if current != host_idx {
+            return Err(anyhow!(
+                "Conflicting drinks constraints: '{}' vs '{}'",
+                people[current].name,
+                people[host_idx].name
+            ));
+        }
+    } else {
+        existing.drinks_host = Some(host_idx);
+    }
+    Ok(())
+}
+
+fn merge_dinner_constraint(
+    existing: &mut PersonHostConstraint,
+    host_idx: usize,
+    people: &[Person],
+) -> Result<()> {
+    if let Some(current) = existing.dinner_host {
+        if current != host_idx {
+            return Err(anyhow!(
+                "Conflicting dinner constraints: '{}' vs '{}'",
+                people[current].name,
+                people[host_idx].name
+            ));
+        }
+    } else {
+        existing.dinner_host = Some(host_idx);
+    }
+    Ok(())
+}
+
+fn unique_forced_host<I>(mut iter: I, people: &[Person], event: &str) -> Result<Option<usize>>
+where
+    I: Iterator<Item = usize>,
+{
+    let first = iter.next();
+    if let Some(first_host) = first {
+        if let Some(other) = iter.find(|&h| h != first_host) {
+            return Err(anyhow!(
+                "Conflicting {} constraints within same group: '{}' vs '{}'",
+                event,
+                people[first_host].name,
+                people[other].name
+            ));
+        }
+    }
+    Ok(first)
+}
+
+fn normalize_person_name_key(name: &str) -> String {
+    let mut key = String::with_capacity(name.len());
+    for c in name.chars().flat_map(|c| c.to_lowercase()) {
+        if c.is_alphanumeric() {
+            key.push(c);
+        }
+    }
+    key
 }
 
 // ─── Validity check ──────────────────────────────────────────────────────────
@@ -133,6 +358,31 @@ pub fn is_valid(sol: &Solution, people: &[Person], cfg: &Config) -> bool {
         }
     }
 
+    true
+}
+
+pub fn is_valid_with_constraints(
+    sol: &Solution,
+    people: &[Person],
+    cfg: &Config,
+    constraints: &ResolvedConstraints,
+) -> bool {
+    is_valid(sol, people, cfg) && satisfies_constraints(sol, constraints)
+}
+
+fn satisfies_constraints(sol: &Solution, constraints: &ResolvedConstraints) -> bool {
+    for (i, c) in constraints.per_person.iter().enumerate() {
+        if let Some(h) = c.drinks_host {
+            if sol.drinks_host[i] != h {
+                return false;
+            }
+        }
+        if let Some(h) = c.dinner_host {
+            if sol.dinner_host[i] != h {
+                return false;
+            }
+        }
+    }
     true
 }
 
@@ -325,10 +575,351 @@ pub fn find_initial_solution(
         }
     }
 
+    // Broader randomized search before systematic fallback.
+    let no_constraints = ResolvedConstraints::empty(n);
+    if let Some(sol) = random_initial_with_constraints(
+        people,
+        hosts_drinks,
+        hosts_dinner,
+        cfg,
+        &no_constraints,
+        300_000,
+    ) {
+        return Ok(sol);
+    }
+
     // Fallback: exhaustive systematic assignment
     // Build a systematic solution: assign groups evenly to drinks hosts respecting capacity
     info!("Random init failed, trying systematic assignment...");
     systematic_initial(people, hosts_drinks, hosts_dinner, cfg)
+}
+
+pub fn enforce_constraints_on_initial(
+    initial: Solution,
+    people: &[Person],
+    hosts_drinks: &[usize],
+    hosts_dinner: &[usize],
+    cfg: &Config,
+    constraints: &ResolvedConstraints,
+) -> Result<Solution> {
+    if constraints.is_empty() {
+        return Ok(initial);
+    }
+
+    let mut patched = initial.clone();
+    for (i, c) in constraints.per_person.iter().enumerate() {
+        if let Some(h) = c.drinks_host {
+            patched.drinks_host[i] = h;
+        }
+        if let Some(h) = c.dinner_host {
+            patched.dinner_host[i] = h;
+        }
+    }
+    if is_valid_with_constraints(&patched, people, cfg, constraints) {
+        return Ok(patched);
+    }
+    if let Some(repaired) = repair_solution_with_constraints_search(
+        patched.clone(),
+        people,
+        hosts_drinks,
+        hosts_dinner,
+        cfg,
+        constraints,
+        400_000,
+    ) {
+        return Ok(repaired);
+    }
+
+    if let Some(repaired) = random_initial_with_constraints(
+        people,
+        hosts_drinks,
+        hosts_dinner,
+        cfg,
+        constraints,
+        200_000,
+    ) {
+        return Ok(repaired);
+    }
+    Err(anyhow!(
+        "Constraint repair failed: no valid solution satisfies all constraints"
+    ))
+}
+
+fn random_initial_with_constraints(
+    people: &[Person],
+    hosts_drinks: &[usize],
+    hosts_dinner: &[usize],
+    cfg: &Config,
+    constraints: &ResolvedConstraints,
+    attempts: usize,
+) -> Option<Solution> {
+    if hosts_drinks.is_empty() || hosts_dinner.is_empty() {
+        return None;
+    }
+
+    let n = people.len();
+    let groups = unique_groups(people);
+    let group_members_list: Vec<Vec<usize>> = groups
+        .iter()
+        .map(|(_, rep)| group_members(people, *rep))
+        .collect();
+    let forced_drinks_by_group: Vec<Option<usize>> = groups
+        .iter()
+        .map(|(_, rep)| constraints.per_person[*rep].drinks_host)
+        .collect();
+    let forced_dinner_by_group: Vec<Option<usize>> = groups
+        .iter()
+        .map(|(_, rep)| constraints.per_person[*rep].dinner_host)
+        .collect();
+
+    let mut rng = rand::thread_rng();
+    let mut drinks_host = vec![0usize; n];
+    let mut dinner_host = vec![0usize; n];
+
+    for _ in 0..attempts {
+        for (gi, members) in group_members_list.iter().enumerate() {
+            let dh = forced_drinks_by_group[gi]
+                .unwrap_or_else(|| hosts_drinks[rng.gen_range(0..hosts_drinks.len())]);
+            let nh = forced_dinner_by_group[gi]
+                .unwrap_or_else(|| hosts_dinner[rng.gen_range(0..hosts_dinner.len())]);
+            for &member in members {
+                drinks_host[member] = dh;
+                dinner_host[member] = nh;
+            }
+        }
+
+        let candidate = Solution {
+            drinks_host: drinks_host.clone(),
+            dinner_host: dinner_host.clone(),
+        };
+        if is_valid_with_constraints(&candidate, people, cfg, constraints) {
+            return Some(candidate);
+        }
+    }
+
+    None
+}
+
+fn repair_solution_with_constraints_search(
+    start: Solution,
+    people: &[Person],
+    hosts_drinks: &[usize],
+    hosts_dinner: &[usize],
+    cfg: &Config,
+    constraints: &ResolvedConstraints,
+    max_iters: usize,
+) -> Option<Solution> {
+    let groups = unique_groups(people);
+    if groups.is_empty() {
+        return None;
+    }
+    let group_members_list: Vec<Vec<usize>> = groups
+        .iter()
+        .map(|(_, rep)| group_members(people, *rep))
+        .collect();
+
+    let mut rng = rand::thread_rng();
+    let mut current = start;
+    let mut current_penalty = constraint_penalty(&current, people, cfg, constraints);
+    if current_penalty == 0 && is_valid_with_constraints(&current, people, cfg, constraints) {
+        return Some(current);
+    }
+
+    let mut best = current.clone();
+    let mut best_penalty = current_penalty;
+    let mut temperature = 20.0_f64;
+
+    for _ in 0..max_iters {
+        let gi = rng.gen_range(0..group_members_list.len());
+        let rep = groups[gi].1;
+        let members = &group_members_list[gi];
+        let c = constraints.per_person[rep];
+        let drinks_mutable = c.drinks_host.is_none() && !hosts_drinks.is_empty();
+        let dinner_mutable = c.dinner_host.is_none() && !hosts_dinner.is_empty();
+        if !drinks_mutable && !dinner_mutable {
+            continue;
+        }
+
+        let mutate_drinks = if drinks_mutable && dinner_mutable {
+            rng.gen()
+        } else {
+            drinks_mutable
+        };
+
+        let mut neighbor = current.clone();
+        if mutate_drinks {
+            let old_host = neighbor.drinks_host[members[0]];
+            if let Some(new_host) = pick_different_host(hosts_drinks, old_host, &mut rng) {
+                for &member in members {
+                    neighbor.drinks_host[member] = new_host;
+                }
+            } else {
+                continue;
+            }
+        } else {
+            let old_host = neighbor.dinner_host[members[0]];
+            if let Some(new_host) = pick_different_host(hosts_dinner, old_host, &mut rng) {
+                for &member in members {
+                    neighbor.dinner_host[member] = new_host;
+                }
+            } else {
+                continue;
+            }
+        }
+
+        let next_penalty = constraint_penalty(&neighbor, people, cfg, constraints);
+        let improve = next_penalty < current_penalty;
+        let accept = improve
+            || rng.gen::<f64>()
+                < (((current_penalty as f64 - next_penalty as f64) / temperature).exp());
+        if accept {
+            current = neighbor;
+            current_penalty = next_penalty;
+            if current_penalty < best_penalty {
+                best = current.clone();
+                best_penalty = current_penalty;
+                if best_penalty == 0 && is_valid_with_constraints(&best, people, cfg, constraints) {
+                    return Some(best);
+                }
+            }
+        }
+
+        temperature = (temperature * 0.99995).max(0.2);
+    }
+
+    if best_penalty == 0 && is_valid_with_constraints(&best, people, cfg, constraints) {
+        Some(best)
+    } else {
+        None
+    }
+}
+
+fn constraint_penalty(
+    sol: &Solution,
+    people: &[Person],
+    cfg: &Config,
+    constraints: &ResolvedConstraints,
+) -> usize {
+    let n = people.len();
+    let mut penalty = 0usize;
+
+    for i in 0..n {
+        let dh = sol.drinks_host[i];
+        let nh = sol.dinner_host[i];
+        if dh >= n || nh >= n {
+            penalty += 50_000;
+            continue;
+        }
+        if !people[dh].receiving_for_drinks {
+            penalty += 20_000;
+        }
+        if !people[nh].receiving_for_dinner {
+            penalty += 20_000;
+        }
+        if people[i].need_pmr {
+            if !people[dh].can_host_pmr {
+                penalty += 5_000;
+            }
+            if !people[nh].can_host_pmr {
+                penalty += 5_000;
+            }
+        }
+
+        let c = constraints.per_person[i];
+        if let Some(h) = c.drinks_host {
+            if dh != h {
+                penalty += 30_000;
+            }
+        }
+        if let Some(h) = c.dinner_host {
+            if nh != h {
+                penalty += 30_000;
+            }
+        }
+    }
+
+    for i in 0..n {
+        for j in (i + 1)..n {
+            if people[i].group_id == people[j].group_id {
+                if sol.drinks_host[i] != sol.drinks_host[j] {
+                    penalty += 15_000;
+                }
+                if sol.dinner_host[i] != sol.dinner_host[j] {
+                    penalty += 15_000;
+                }
+            }
+        }
+    }
+
+    let mut drinks_count: HashMap<usize, usize> = HashMap::new();
+    let mut dinner_count: HashMap<usize, usize> = HashMap::new();
+    for i in 0..n {
+        *drinks_count.entry(sol.drinks_host[i]).or_insert(0) += 1;
+        *dinner_count.entry(sol.dinner_host[i]).or_insert(0) += 1;
+    }
+
+    for (&host_idx, &count) in &drinks_count {
+        if host_idx >= n {
+            continue;
+        }
+        let max = people[host_idx].max_guests_drinks;
+        if count > max {
+            penalty += (count - max) * 2_000;
+        }
+        if count > 0 && count < cfg.min_guests_for_drinks {
+            penalty += (cfg.min_guests_for_drinks - count) * 2_000;
+        }
+    }
+    for (&host_idx, &count) in &dinner_count {
+        if host_idx >= n {
+            continue;
+        }
+        let max = people[host_idx].max_guests_dinner;
+        if count > max {
+            penalty += (count - max) * 2_000;
+        }
+        if count > 0 && count < cfg.min_guests_for_dinner {
+            penalty += (cfg.min_guests_for_dinner - count) * 2_000;
+        }
+    }
+
+    for i in 0..n {
+        if people[i].receiving_for_drinks {
+            let host_used = drinks_count.contains_key(&i);
+            if host_used && sol.drinks_host[i] != i {
+                penalty += 10_000;
+            }
+        }
+        if people[i].receiving_for_dinner {
+            let host_used = dinner_count.contains_key(&i);
+            if host_used && sol.dinner_host[i] != i {
+                penalty += 10_000;
+            }
+        }
+    }
+
+    let mut drinks_addr_used: HashMap<String, usize> = HashMap::new();
+    for &host_idx in drinks_count.keys() {
+        if host_idx >= n {
+            continue;
+        }
+        let key = normalize_address_key(&people[host_idx].address);
+        if drinks_addr_used.insert(key, host_idx).is_some() {
+            penalty += 10_000;
+        }
+    }
+    let mut dinner_addr_used: HashMap<String, usize> = HashMap::new();
+    for &host_idx in dinner_count.keys() {
+        if host_idx >= n {
+            continue;
+        }
+        let key = normalize_address_key(&people[host_idx].address);
+        if dinner_addr_used.insert(key, host_idx).is_some() {
+            penalty += 10_000;
+        }
+    }
+
+    penalty
 }
 
 fn systematic_initial(
@@ -337,8 +928,35 @@ fn systematic_initial(
     hosts_dinner: &[usize],
     cfg: &Config,
 ) -> Result<Solution> {
+    let ng = unique_groups(people).len();
+    let no_drinks_constraints = vec![None; ng];
+    let no_dinner_constraints = vec![None; ng];
+    systematic_initial_with_forced(
+        people,
+        hosts_drinks,
+        hosts_dinner,
+        cfg,
+        &no_drinks_constraints,
+        &no_dinner_constraints,
+    )
+}
+
+fn systematic_initial_with_forced(
+    people: &[Person],
+    hosts_drinks: &[usize],
+    hosts_dinner: &[usize],
+    cfg: &Config,
+    forced_drinks_by_group: &[Option<usize>],
+    forced_dinner_by_group: &[Option<usize>],
+) -> Result<Solution> {
     let n = people.len();
     let groups = unique_groups(people);
+    let ng = groups.len();
+    if forced_drinks_by_group.len() != ng || forced_dinner_by_group.len() != ng {
+        return Err(anyhow!(
+            "Internal error: group constraint vectors have wrong length"
+        ));
+    }
 
     let group_members_list: Vec<Vec<usize>> = groups
         .iter()
@@ -363,6 +981,39 @@ fn systematic_initial(
         .iter()
         .map(|&host_person| group_idx_by_person[host_person])
         .collect();
+    let drinks_slot_by_host: HashMap<usize, usize> = hosts_drinks
+        .iter()
+        .enumerate()
+        .map(|(slot, &host)| (host, slot))
+        .collect();
+    let dinner_slot_by_host: HashMap<usize, usize> = hosts_dinner
+        .iter()
+        .enumerate()
+        .map(|(slot, &host)| (host, slot))
+        .collect();
+
+    let mut forced_drinks_slot = vec![None; ng];
+    let mut forced_dinner_slot = vec![None; ng];
+    for gi in 0..ng {
+        if let Some(host_person) = forced_drinks_by_group[gi] {
+            let slot = *drinks_slot_by_host.get(&host_person).ok_or_else(|| {
+                anyhow!(
+                    "Required drinks host '{}' is not part of candidate hosts",
+                    people[host_person].name
+                )
+            })?;
+            forced_drinks_slot[gi] = Some(slot);
+        }
+        if let Some(host_person) = forced_dinner_by_group[gi] {
+            let slot = *dinner_slot_by_host.get(&host_person).ok_or_else(|| {
+                anyhow!(
+                    "Required dinner host '{}' is not part of candidate hosts",
+                    people[host_person].name
+                )
+            })?;
+            forced_dinner_slot[gi] = Some(slot);
+        }
+    }
 
     let drinks_caps: Vec<usize> = hosts_drinks
         .iter()
@@ -392,6 +1043,7 @@ fn systematic_initial(
                 &drinks_can_pmr,
                 &drinks_owner_group,
                 cfg.min_guests_for_drinks,
+                &forced_drinks_slot,
             )
         });
         let dinner_task = s.spawn(|| {
@@ -403,6 +1055,7 @@ fn systematic_initial(
                 &dinner_can_pmr,
                 &dinner_owner_group,
                 cfg.min_guests_for_dinner,
+                &forced_dinner_slot,
             )
         });
         (
@@ -431,7 +1084,7 @@ fn systematic_initial(
         drinks_host,
         dinner_host,
     };
-    if !is_valid(&sol, &people, cfg) {
+    if !is_valid(&sol, people, cfg) {
         return Err(anyhow!(
             "Systematic assignment produced an invalid solution"
         ));
@@ -447,11 +1100,22 @@ fn assign_groups_to_hosts(
     host_can_pmr: &[bool],
     host_owner_group: &[usize],
     min_guests: usize,
+    forced_host_slot_by_group: &[Option<usize>],
 ) -> Option<Vec<usize>> {
     if group_sizes.is_empty() {
         return Some(Vec::new());
     }
     if hosts.is_empty() {
+        return None;
+    }
+    if forced_host_slot_by_group.len() != group_sizes.len() {
+        return None;
+    }
+    if forced_host_slot_by_group
+        .iter()
+        .flatten()
+        .any(|&slot| slot >= hosts.len())
+    {
         return None;
     }
 
@@ -488,6 +1152,7 @@ fn assign_groups_to_hosts(
 
     // Fast path: randomized greedy construction.
     let greedy_restarts = if group_sizes.len() <= 50 { 64 } else { 192 };
+    let relaxed_domain = forced_host_slot_by_group.iter().any(Option::is_some);
     let mut rng = rand::thread_rng();
     for _ in 0..greedy_restarts {
         if let Some(group_slot_assign) = greedy_assign_groups_to_host_slots(
@@ -502,6 +1167,7 @@ fn assign_groups_to_hosts(
             total_pmr_people,
             total_capacity,
             total_pmr_capacity,
+            forced_host_slot_by_group,
             &mut rng,
         ) {
             let assignment: Vec<usize> = group_slot_assign
@@ -564,6 +1230,8 @@ fn assign_groups_to_hosts(
             restart > 0,
             search_start,
             search_timeout,
+            relaxed_domain,
+            forced_host_slot_by_group,
             &mut rng,
         ) {
             let assignment: Vec<usize> = assigned_group_slot
@@ -596,6 +1264,7 @@ fn greedy_assign_groups_to_host_slots(
     total_pmr_people: usize,
     total_capacity: usize,
     total_pmr_capacity: usize,
+    forced_host_slot_by_group: &[Option<usize>],
     rng: &mut impl Rng,
 ) -> Option<Vec<usize>> {
     let mut order: Vec<usize> = (0..group_sizes.len()).collect();
@@ -634,6 +1303,7 @@ fn greedy_assign_groups_to_host_slots(
                 host_caps,
                 host_can_pmr,
                 host_owner_group,
+                forced_host_slot_by_group,
             ) {
                 continue;
             }
@@ -737,6 +1407,8 @@ fn backtrack_assign_groups(
     randomize_values: bool,
     search_start: Instant,
     search_timeout: Duration,
+    relaxed_domain: bool,
+    forced_host_slot_by_group: &[Option<usize>],
     rng: &mut impl Rng,
 ) -> bool {
     if search_start.elapsed() >= search_timeout {
@@ -760,17 +1432,34 @@ fn backtrack_assign_groups(
         let need_pmr = group_need_pmr[candidate_gi];
         let mut domain = 0usize;
         for host_slot in 0..host_caps.len() {
-            if can_assign_group_to_host(
-                candidate_gi,
-                host_slot,
-                gsize,
-                need_pmr,
-                counts,
-                assigned_group_slot,
-                host_caps,
-                host_can_pmr,
-                host_owner_group,
-            ) {
+            let allowed = if relaxed_domain {
+                can_assign_group_to_host_for_domain(
+                    candidate_gi,
+                    host_slot,
+                    gsize,
+                    need_pmr,
+                    counts,
+                    assigned_group_slot,
+                    host_caps,
+                    host_can_pmr,
+                    host_owner_group,
+                    forced_host_slot_by_group,
+                )
+            } else {
+                can_assign_group_to_host(
+                    candidate_gi,
+                    host_slot,
+                    gsize,
+                    need_pmr,
+                    counts,
+                    assigned_group_slot,
+                    host_caps,
+                    host_can_pmr,
+                    host_owner_group,
+                    forced_host_slot_by_group,
+                )
+            };
+            if allowed {
                 domain += 1;
             }
         }
@@ -812,6 +1501,7 @@ fn backtrack_assign_groups(
             host_caps,
             host_can_pmr,
             host_owner_group,
+            forced_host_slot_by_group,
         ) {
             continue;
         }
@@ -884,6 +1574,8 @@ fn backtrack_assign_groups(
             randomize_values,
             search_start,
             search_timeout,
+            relaxed_domain,
+            forced_host_slot_by_group,
             rng,
         ) {
             return true;
@@ -909,7 +1601,13 @@ fn can_assign_group_to_host(
     host_caps: &[usize],
     host_can_pmr: &[bool],
     host_owner_group: &[usize],
+    forced_host_slot_by_group: &[Option<usize>],
 ) -> bool {
+    if let Some(required_slot) = forced_host_slot_by_group[group_idx] {
+        if required_slot != host_slot {
+            return false;
+        }
+    }
     let owner_group = host_owner_group[host_slot];
     if owner_group >= assigned_group_slot.len() {
         return false;
@@ -917,6 +1615,46 @@ fn can_assign_group_to_host(
     if owner_group != group_idx && assigned_group_slot[owner_group] != host_slot {
         return false;
     }
+    if need_pmr && !host_can_pmr[host_slot] {
+        return false;
+    }
+    counts[host_slot] + group_size <= host_caps[host_slot]
+}
+
+fn can_assign_group_to_host_for_domain(
+    group_idx: usize,
+    host_slot: usize,
+    group_size: usize,
+    need_pmr: bool,
+    counts: &[usize],
+    assigned_group_slot: &[usize],
+    host_caps: &[usize],
+    host_can_pmr: &[bool],
+    host_owner_group: &[usize],
+    forced_host_slot_by_group: &[Option<usize>],
+) -> bool {
+    if let Some(required_slot) = forced_host_slot_by_group[group_idx] {
+        if required_slot != host_slot {
+            return false;
+        }
+    }
+    let owner_group = host_owner_group[host_slot];
+    if owner_group >= assigned_group_slot.len() {
+        return false;
+    }
+
+    if owner_group != group_idx {
+        let owner_assigned = assigned_group_slot[owner_group];
+        let owner_compatible = owner_assigned == host_slot
+            || (owner_assigned == usize::MAX
+                && forced_host_slot_by_group[owner_group]
+                    .map(|slot| slot == host_slot)
+                    .unwrap_or(true));
+        if !owner_compatible {
+            return false;
+        }
+    }
+
     if need_pmr && !host_can_pmr[host_slot] {
         return false;
     }
@@ -941,9 +1679,16 @@ pub fn simulated_annealing(
     hosts_dinner: &[usize],
     travel: &TravelMatrix,
     cfg: &Config,
+    constraints: &ResolvedConstraints,
 ) -> Result<Solution> {
     let sa = &cfg.simulated_annealing;
     let mut rng = rand::thread_rng();
+
+    if !is_valid_with_constraints(&initial, people, cfg, constraints) {
+        return Err(anyhow!(
+            "Initial solution does not satisfy hard constraints"
+        ));
+    }
 
     let mut current = initial.clone();
     let mut current_cost = evaluate(&current, people, travel, cfg);
@@ -966,9 +1711,10 @@ pub fn simulated_annealing(
                 &groups,
                 hosts_drinks,
                 hosts_dinner,
+                constraints,
                 &mut rng,
             );
-            if !is_valid(&neighbor, people, cfg) {
+            if !is_valid_with_constraints(&neighbor, people, cfg, constraints) {
                 continue;
             }
 
@@ -1010,28 +1756,70 @@ fn perturb(
     groups: &[(u32, usize)],
     hosts_drinks: &[usize],
     hosts_dinner: &[usize],
+    constraints: &ResolvedConstraints,
     rng: &mut impl Rng,
 ) -> Solution {
     let mut new_sol = sol.clone();
 
-    // Pick a random group
-    let (_, rep) = groups[rng.gen_range(0..groups.len())];
-    let members = group_members(people, rep);
+    for _ in 0..groups.len().max(1) {
+        // Pick a random group
+        let (_, rep) = groups[rng.gen_range(0..groups.len())];
+        let members = group_members(people, rep);
 
-    // Randomly choose to perturb drinks or dinner assignment
-    let perturb_drinks: bool = rng.gen();
-
-    if perturb_drinks && !hosts_drinks.is_empty() {
-        let new_host = hosts_drinks[rng.gen_range(0..hosts_drinks.len())];
-        for m in &members {
-            new_sol.drinks_host[*m] = new_host;
+        let c = constraints.per_person[rep];
+        let drinks_fixed = c.drinks_host.is_some();
+        let dinner_fixed = c.dinner_host.is_some();
+        if drinks_fixed && dinner_fixed {
+            continue;
         }
-    } else if !hosts_dinner.is_empty() {
-        let new_host = hosts_dinner[rng.gen_range(0..hosts_dinner.len())];
-        for m in &members {
-            new_sol.dinner_host[*m] = new_host;
+
+        let perturb_drinks = if drinks_fixed {
+            false
+        } else if dinner_fixed {
+            true
+        } else {
+            rng.gen()
+        };
+
+        if perturb_drinks && !hosts_drinks.is_empty() {
+            let current_host = new_sol.drinks_host[members[0]];
+            if let Some(new_host) = pick_different_host(hosts_drinks, current_host, rng) {
+                for m in &members {
+                    new_sol.drinks_host[*m] = new_host;
+                }
+            }
+            return new_sol;
+        }
+        if !hosts_dinner.is_empty() {
+            let current_host = new_sol.dinner_host[members[0]];
+            if let Some(new_host) = pick_different_host(hosts_dinner, current_host, rng) {
+                for m in &members {
+                    new_sol.dinner_host[*m] = new_host;
+                }
+            }
+            return new_sol;
         }
     }
 
     new_sol
+}
+
+fn pick_different_host(hosts: &[usize], current: usize, rng: &mut impl Rng) -> Option<usize> {
+    if hosts.is_empty() {
+        return None;
+    }
+    if hosts.len() == 1 {
+        return if hosts[0] == current {
+            None
+        } else {
+            Some(hosts[0])
+        };
+    }
+    for _ in 0..8 {
+        let candidate = hosts[rng.gen_range(0..hosts.len())];
+        if candidate != current {
+            return Some(candidate);
+        }
+    }
+    hosts.iter().copied().find(|&h| h != current)
 }

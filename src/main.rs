@@ -14,9 +14,12 @@ fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     info!("=== Progressive Dinner Optimizer ===");
-    let people_path = env::args()
-        .nth(1)
+    let args: Vec<String> = env::args().collect();
+    let people_path = args
+        .get(1)
+        .cloned()
         .unwrap_or_else(|| "data/input/people.csv".to_string());
+    let constraints_path = args.get(2).cloned();
 
     // 1. Load configuration
     info!("Loading configuration...");
@@ -31,7 +34,24 @@ fn main() -> Result<()> {
         ids.len()
     });
 
-    // 3. Resolve candidate hosts
+    // 3. Optional constraints
+    let raw_constraints = if let Some(path) = constraints_path.as_deref() {
+        info!("Loading constraints from CSV: {}", path);
+        model::load_constraints(path)?
+    } else {
+        Vec::new()
+    };
+    let constraints = solver::resolve_constraints(&people, &raw_constraints)?;
+    if constraints.is_empty() {
+        info!("No hard host constraints.");
+    } else {
+        info!(
+            "Resolved {} hard host constraint row(s).",
+            raw_constraints.len()
+        );
+    }
+
+    // 4. Resolve candidate hosts
     let hosts_drinks: Vec<usize> = people
         .iter()
         .enumerate()
@@ -44,8 +64,10 @@ fn main() -> Result<()> {
         .filter(|(_, p)| p.receiving_for_dinner)
         .map(|(i, _)| i)
         .collect();
-    let hosts_drinks = dedupe_hosts_by_address(&people, &hosts_drinks, true);
-    let hosts_dinner = dedupe_hosts_by_address(&people, &hosts_dinner, false);
+    let mut hosts_drinks = dedupe_hosts_by_address(&people, &hosts_drinks, true);
+    let mut hosts_dinner = dedupe_hosts_by_address(&people, &hosts_dinner, false);
+    ensure_hosts_present(&mut hosts_drinks, &constraints.required_drinks_hosts);
+    ensure_hosts_present(&mut hosts_dinner, &constraints.required_dinner_hosts);
 
     info!(
         "Drinks hosts: {} | Dinner hosts: {}",
@@ -53,7 +75,7 @@ fn main() -> Result<()> {
         hosts_dinner.len()
     );
 
-    // 4. Compute only relevant travel times (with cache)
+    // 5. Compute only relevant travel times (with cache)
     info!("Computing travel times...");
     let dessert_addr = cfg.dessert_full_address();
     let mut dist_cache = geo::DistCache::load("data/cache/distance_cache.json")?;
@@ -67,28 +89,44 @@ fn main() -> Result<()> {
     )?;
     dist_cache.save("data/cache/distance_cache.json")?;
 
-    // 5. Find initial valid solution
-    info!("Finding initial valid solution...");
+    // 6. Find initial valid solution (without hard constraints)
+    info!("Finding initial valid solution (without hard constraints)...");
     let initial = solver::find_initial_solution(&people, &hosts_drinks, &hosts_dinner, &cfg)?;
     info!("Initial solution found.");
 
     let initial_score = solver::evaluate(&initial, &people, &travel, &cfg);
     info!("Initial score: {:.4}", initial_score);
 
-    // 6. Simulated annealing optimization
+    // 7. Enforce hard constraints on initial solution
+    let constrained_initial = solver::enforce_constraints_on_initial(
+        initial,
+        &people,
+        &hosts_drinks,
+        &hosts_dinner,
+        &cfg,
+        &constraints,
+    )?;
+    let constrained_initial_score = solver::evaluate(&constrained_initial, &people, &travel, &cfg);
+    info!(
+        "Initial score after hard-constraint repair: {:.4}",
+        constrained_initial_score
+    );
+
+    // 8. Simulated annealing optimization
     info!("Starting simulated annealing...");
     let best = solver::simulated_annealing(
-        initial,
+        constrained_initial,
         &people,
         &hosts_drinks,
         &hosts_dinner,
         &travel,
         &cfg,
+        &constraints,
     )?;
     let best_score = solver::evaluate(&best, &people, &travel, &cfg);
     info!("Best score after SA: {:.4}", best_score);
 
-    // 7. Write output
+    // 9. Write output
     let run_ts = Local::now().format("%Y%m%d_%H%M%S").to_string();
     let txt_output = format!("data/output/result_{}.txt", run_ts);
     let csv_output = format!("data/output/result_{}.csv", run_ts);
@@ -107,7 +145,7 @@ fn main() -> Result<()> {
         "python3"
     };
 
-    // 8. Generate Excel file
+    // 10. Generate Excel file
     info!("Generating Excel report...");
     let xlsx_status = std::process::Command::new(python)
         .arg("scripts/make_xlsx.py")
@@ -121,7 +159,7 @@ fn main() -> Result<()> {
         Err(e) => log::warn!("Failed to run Excel script: {}", e),
     }
 
-    // 9. Upload to Google Drive if enabled
+    // 11. Upload to Google Drive if enabled
     if cfg.google_drive.enabled {
         info!("Uploading to Google Drive...");
         let status = std::process::Command::new(python)
@@ -185,4 +223,14 @@ fn normalize_address_key(address: &str) -> String {
         }
     }
     key
+}
+
+fn ensure_hosts_present(hosts: &mut Vec<usize>, required: &[usize]) {
+    let mut seen: HashMap<usize, ()> = hosts.iter().copied().map(|h| (h, ())).collect();
+    for &h in required {
+        if seen.insert(h, ()).is_none() {
+            hosts.push(h);
+        }
+    }
+    hosts.sort_unstable();
 }
