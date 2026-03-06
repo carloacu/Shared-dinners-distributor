@@ -66,6 +66,8 @@ Les fichiers de sortie sont timestampes et non ecrases :
       minimize_walk_time: 2.0
       host_walk_drinks_to_dinner: 4.0
     simulated_annealing:
+      runs: 10
+      parallel_threads: 1
       initial_temperature: 100.0
       cooling_rate: 0.995
       min_temperature: 0.01

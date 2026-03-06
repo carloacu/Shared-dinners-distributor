@@ -4,11 +4,21 @@ mod model;
 mod output;
 mod solver;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use chrono::Local;
 use log::info;
 use std::collections::HashMap;
 use std::env;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc;
+use std::thread;
+
+#[derive(Debug)]
+struct OptimizationRunResult {
+    run_index: usize,
+    best_solution: solver::Solution,
+    best_score: f64,
+}
 
 fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
@@ -89,42 +99,62 @@ fn main() -> Result<()> {
     )?;
     dist_cache.save("data/cache/distance_cache.json")?;
 
-    // 6. Find initial valid solution (without hard constraints)
-    info!("Finding initial valid solution (without hard constraints)...");
-    let initial = solver::find_initial_solution(&people, &hosts_drinks, &hosts_dinner, &cfg)?;
-    info!("Initial solution found.");
-
-    let initial_score = solver::evaluate(&initial, &people, &travel, &cfg);
-    info!("Initial score: {:.4}", initial_score);
-
-    // 7. Enforce hard constraints on initial solution
-    let constrained_initial = solver::enforce_constraints_on_initial(
-        initial,
-        &people,
-        &hosts_drinks,
-        &hosts_dinner,
-        &cfg,
-        &constraints,
-    )?;
-    let constrained_initial_score = solver::evaluate(&constrained_initial, &people, &travel, &cfg);
+    // 6. Run initial solution + hard-constraint repair + simulated annealing multiple times
+    let total_runs = cfg.simulated_annealing.runs.max(1);
+    let requested_threads = cfg.simulated_annealing.parallel_threads.max(1);
+    let worker_threads = requested_threads.min(total_runs);
+    let use_parallel = worker_threads > 1;
     info!(
-        "Initial score after hard-constraint repair: {:.4}",
-        constrained_initial_score
+        "Running optimization {} time(s) with {} thread(s)...",
+        total_runs, worker_threads
     );
 
-    // 8. Simulated annealing optimization
-    info!("Starting simulated annealing...");
-    let best = solver::simulated_annealing(
-        constrained_initial,
-        &people,
-        &hosts_drinks,
-        &hosts_dinner,
-        &travel,
-        &cfg,
-        &constraints,
-    )?;
-    let best_score = solver::evaluate(&best, &people, &travel, &cfg);
-    info!("Best score after SA: {:.4}", best_score);
+    let mut run_results = if use_parallel {
+        run_iterations_parallel(
+            total_runs,
+            worker_threads,
+            &people,
+            &hosts_drinks,
+            &hosts_dinner,
+            &travel,
+            &cfg,
+            &constraints,
+        )?
+    } else {
+        run_iterations_sequential(
+            total_runs,
+            &people,
+            &hosts_drinks,
+            &hosts_dinner,
+            &travel,
+            &cfg,
+            &constraints,
+        )?
+    };
+
+    if run_results.is_empty() {
+        return Err(anyhow!("No optimization run produced a result"));
+    }
+
+    run_results.sort_by(|a, b| a.best_score.total_cmp(&b.best_score));
+    info!("Sorted SA scores (lower is better):");
+    for (rank, run) in run_results.iter().enumerate() {
+        info!(
+            "  #{:02} run {}/{} -> {:.4}",
+            rank + 1,
+            run.run_index,
+            total_runs,
+            run.best_score
+        );
+    }
+
+    let best_run = &run_results[0];
+    let best = best_run.best_solution.clone();
+    let best_score = best_run.best_score;
+    info!(
+        "Selected best run: {}/{} with score {:.4}",
+        best_run.run_index, total_runs, best_score
+    );
 
     // 9. Write output
     let run_ts = Local::now().format("%Y%m%d_%H%M%S").to_string();
@@ -256,4 +286,152 @@ fn ensure_hosts_present(hosts: &mut Vec<usize>, required: &[usize]) {
         }
     }
     hosts.sort_unstable();
+}
+
+fn run_iterations_sequential(
+    total_runs: usize,
+    people: &[model::Person],
+    hosts_drinks: &[usize],
+    hosts_dinner: &[usize],
+    travel: &geo::TravelMatrix,
+    cfg: &config::Config,
+    constraints: &solver::ResolvedConstraints,
+) -> Result<Vec<OptimizationRunResult>> {
+    let mut results = Vec::with_capacity(total_runs);
+    for run_index in 1..=total_runs {
+        results.push(run_single_iteration(
+            run_index,
+            total_runs,
+            people,
+            hosts_drinks,
+            hosts_dinner,
+            travel,
+            cfg,
+            constraints,
+            true,
+        )?);
+    }
+    Ok(results)
+}
+
+fn run_iterations_parallel(
+    total_runs: usize,
+    worker_threads: usize,
+    people: &[model::Person],
+    hosts_drinks: &[usize],
+    hosts_dinner: &[usize],
+    travel: &geo::TravelMatrix,
+    cfg: &config::Config,
+    constraints: &solver::ResolvedConstraints,
+) -> Result<Vec<OptimizationRunResult>> {
+    let next_run = AtomicUsize::new(0);
+    let next_run_ref = &next_run;
+    let (tx, rx) = mpsc::channel::<Result<OptimizationRunResult>>();
+
+    thread::scope(|scope| {
+        for _ in 0..worker_threads {
+            let tx = tx.clone();
+            scope.spawn(move || loop {
+                let run_zero_based = next_run_ref.fetch_add(1, Ordering::Relaxed);
+                if run_zero_based >= total_runs {
+                    break;
+                }
+                let run_index = run_zero_based + 1;
+                let result = run_single_iteration(
+                    run_index,
+                    total_runs,
+                    people,
+                    hosts_drinks,
+                    hosts_dinner,
+                    travel,
+                    cfg,
+                    constraints,
+                    false,
+                );
+                if tx.send(result).is_err() {
+                    break;
+                }
+            });
+        }
+        drop(tx);
+
+        let mut results = Vec::with_capacity(total_runs);
+        for _ in 0..total_runs {
+            match rx.recv() {
+                Ok(Ok(run)) => results.push(run),
+                Ok(Err(e)) => return Err(e),
+                Err(e) => return Err(anyhow!("Failed to receive parallel run result: {}", e)),
+            }
+        }
+        Ok(results)
+    })
+}
+
+fn run_single_iteration(
+    run_index: usize,
+    total_runs: usize,
+    people: &[model::Person],
+    hosts_drinks: &[usize],
+    hosts_dinner: &[usize],
+    travel: &geo::TravelMatrix,
+    cfg: &config::Config,
+    constraints: &solver::ResolvedConstraints,
+    log_sa_progress: bool,
+) -> Result<OptimizationRunResult> {
+    if log_sa_progress {
+        info!(
+            "Run {}/{}: finding initial valid solution...",
+            run_index, total_runs
+        );
+    }
+    let initial = solver::find_initial_solution(people, hosts_drinks, hosts_dinner, cfg)?;
+    let initial_score = solver::evaluate(&initial, people, travel, cfg);
+    if log_sa_progress {
+        info!(
+            "Run {}/{}: initial score {:.4}",
+            run_index, total_runs, initial_score
+        );
+    }
+
+    let constrained_initial = solver::enforce_constraints_on_initial(
+        initial,
+        people,
+        hosts_drinks,
+        hosts_dinner,
+        cfg,
+        constraints,
+    )?;
+    let constrained_initial_score = solver::evaluate(&constrained_initial, people, travel, cfg);
+    if log_sa_progress {
+        info!(
+            "Run {}/{}: initial score after hard-constraint repair {:.4}",
+            run_index, total_runs, constrained_initial_score
+        );
+        info!(
+            "Run {}/{}: starting simulated annealing...",
+            run_index, total_runs
+        );
+    }
+
+    let best_solution = solver::simulated_annealing(
+        constrained_initial,
+        people,
+        hosts_drinks,
+        hosts_dinner,
+        travel,
+        cfg,
+        constraints,
+        log_sa_progress,
+    )?;
+    let best_score = solver::evaluate(&best_solution, people, travel, cfg);
+    info!(
+        "Run {}/{}: completed with best score {:.4}",
+        run_index, total_runs, best_score
+    );
+
+    Ok(OptimizationRunResult {
+        run_index,
+        best_solution,
+        best_score,
+    })
 }

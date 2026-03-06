@@ -62,11 +62,23 @@ fn default_avoid_pair_same_event_weight() -> f64 {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct SAParams {
+    #[serde(default = "default_sa_runs")]
+    pub runs: usize,
+    #[serde(default = "default_sa_parallel_threads")]
+    pub parallel_threads: usize,
     pub initial_temperature: f64,
     pub cooling_rate: f64,
     pub min_temperature: f64,
     pub iterations_per_temperature: usize,
     pub max_iterations: usize,
+}
+
+fn default_sa_runs() -> usize {
+    10
+}
+
+fn default_sa_parallel_threads() -> usize {
+    1
 }
 
 impl Config {

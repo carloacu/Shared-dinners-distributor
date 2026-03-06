@@ -1667,6 +1667,7 @@ pub fn simulated_annealing(
     travel: &TravelMatrix,
     cfg: &Config,
     constraints: &ResolvedConstraints,
+    log_progress: bool,
 ) -> Result<Solution> {
     let sa = &cfg.simulated_annealing;
     let mut rng = rand::thread_rng();
@@ -1721,7 +1722,7 @@ pub fn simulated_annealing(
 
         temperature *= sa.cooling_rate;
 
-        if total_iter % 5000 == 0 {
+        if log_progress && total_iter % 5000 == 0 {
             info!(
                 "SA iter {} | T={:.4} | current={:.4} | best={:.4}",
                 total_iter, temperature, current_cost, best_cost
@@ -1729,10 +1730,12 @@ pub fn simulated_annealing(
         }
     }
 
-    info!(
-        "SA finished after {} iterations. Best cost: {:.4}",
-        total_iter, best_cost
-    );
+    if log_progress {
+        info!(
+            "SA finished after {} iterations. Best cost: {:.4}",
+            total_iter, best_cost
+        );
+    }
     Ok(best)
 }
 
