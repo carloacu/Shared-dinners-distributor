@@ -131,6 +131,11 @@ fn main() -> Result<()> {
     let txt_output = format!("data/output/result_{}.txt", run_ts);
     let csv_output = format!("data/output/result_{}.csv", run_ts);
     let xlsx_output = format!("data/output/result_{}.xlsx", run_ts);
+    let kml_output = if let Some(prefix) = xlsx_output.strip_suffix(".xlsx") {
+        format!("{}_hotes_potentiels_mymaps.kml", prefix)
+    } else {
+        format!("{}_hotes_potentiels_mymaps.kml", xlsx_output)
+    };
 
     info!("Writing output...");
     output::write_result(&best, &people, &dessert_addr, &travel, &cfg, &txt_output)?;
@@ -161,15 +166,33 @@ fn main() -> Result<()> {
 
     // 11. Upload to Google Drive if enabled
     if cfg.google_drive.enabled {
-        info!("Uploading to Google Drive...");
-        let status = std::process::Command::new(python)
-            .arg("scripts/upload_to_drive.py")
-            .arg(&xlsx_output)
-            .status();
-        match status {
-            Ok(s) if s.success() => info!("Upload to Google Drive successful!"),
-            Ok(s) => log::warn!("Upload script exited with status: {}", s),
-            Err(e) => log::warn!("Failed to run upload script: {}", e),
+        let mut files_to_upload: Vec<String> = Vec::new();
+        if std::path::Path::new(&xlsx_output).exists() {
+            files_to_upload.push(xlsx_output.clone());
+        } else {
+            log::warn!("Skipping Drive upload for missing file: {}", xlsx_output);
+        }
+        if std::path::Path::new(&kml_output).exists() {
+            files_to_upload.push(kml_output.clone());
+        } else {
+            log::warn!("Skipping Drive upload for missing file: {}", kml_output);
+        }
+
+        if files_to_upload.is_empty() {
+            log::warn!("No files available to upload to Google Drive.");
+        } else {
+            info!("Uploading to Google Drive...");
+            let mut cmd = std::process::Command::new(python);
+            cmd.arg("scripts/upload_to_drive.py");
+            for fp in &files_to_upload {
+                cmd.arg(fp);
+            }
+            let status = cmd.status();
+            match status {
+                Ok(s) if s.success() => info!("Upload to Google Drive successful!"),
+                Ok(s) => log::warn!("Upload script exited with status: {}", s),
+                Err(e) => log::warn!("Failed to run upload script: {}", e),
+            }
         }
     }
 

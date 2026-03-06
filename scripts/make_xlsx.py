@@ -59,6 +59,14 @@ dist = {}
 if os.path.exists(cache_path):
     dist = json.load(open(cache_path)).get('entries', {})
 
+geocode_cache_path = 'data/cache/geocode_cache.json'
+geocode_cache = {}
+if os.path.exists(geocode_cache_path):
+    raw_geo = json.load(open(geocode_cache_path))
+    if isinstance(raw_geo, dict):
+        geocode_cache = raw_geo
+geocode_disabled = False
+
 def normalize_address(address):
     s = (address or '').lower()
     s = s.replace('-', ' ').replace('_', ' ')
@@ -99,6 +107,74 @@ def walk(addr_from, addr_to):
     reverse = f"{addr_to}|||{addr_from}"
     return round(dist.get(legacy, dist.get(reverse, 0)) / 60.0, 1)
 
+def geocode_with_ors(address, api_key):
+    import urllib.parse, urllib.request
+    url = (
+        "https://api.openrouteservice.org/geocode/search"
+        f"?api_key={urllib.parse.quote(api_key)}"
+        f"&text={urllib.parse.quote(address)}&size=1"
+    )
+    req = urllib.request.Request(url, headers={"User-Agent": "shared-dinners-distributor/1.0"})
+    with urllib.request.urlopen(req, timeout=2.5) as resp:
+        payload = json.loads(resp.read().decode("utf-8"))
+    features = payload.get("features") or []
+    if not features:
+        return None
+    coords = (((features[0] or {}).get("geometry") or {}).get("coordinates")) or []
+    if len(coords) < 2:
+        return None
+    lon, lat = float(coords[0]), float(coords[1])
+    return (lat, lon)
+
+def geocode_with_nominatim(address):
+    import urllib.parse, urllib.request
+    url = (
+        "https://nominatim.openstreetmap.org/search"
+        f"?q={urllib.parse.quote(address)}&format=json&limit=1"
+    )
+    req = urllib.request.Request(url, headers={"User-Agent": "shared-dinners-distributor/1.0"})
+    with urllib.request.urlopen(req, timeout=2.5) as resp:
+        payload = json.loads(resp.read().decode("utf-8"))
+    if not payload:
+        return None
+    lat = float(payload[0]["lat"])
+    lon = float(payload[0]["lon"])
+    return (lat, lon)
+
+def geocode_address(address, cfg):
+    global geocode_disabled
+    if geocode_disabled:
+        return None
+    key = normalize_address(address)
+    cached = geocode_cache.get(key)
+    if isinstance(cached, dict) and "lat" in cached and "lon" in cached:
+        return (float(cached["lat"]), float(cached["lon"]))
+    if isinstance(cached, list) and len(cached) == 2:
+        return (float(cached[0]), float(cached[1]))
+
+    latlon = None
+    ors_failed = False
+    nom_failed = False
+    api_key = str(cfg.get("ors_api_key", "") or "").strip()
+    if api_key and api_key != "YOUR_ORS_API_KEY_HERE":
+        try:
+            latlon = geocode_with_ors(address, api_key)
+        except Exception:
+            ors_failed = True
+            latlon = None
+    if latlon is None:
+        try:
+            latlon = geocode_with_nominatim(address)
+        except Exception:
+            nom_failed = True
+            latlon = None
+    if latlon is None and (ors_failed or not api_key) and nom_failed:
+        geocode_disabled = True
+
+    if latlon is not None:
+        geocode_cache[key] = {"lat": latlon[0], "lon": latlon[1]}
+    return latlon
+
 def yn(v):
     return str(v or '').strip().lower() in {'yes', 'y', 'true', '1', 'oui'}
 
@@ -113,6 +189,204 @@ def parse_int(v, default=None):
         return int(float(str(v).strip()))
     except (TypeError, ValueError):
         return default
+
+def xml_esc(v):
+    import html
+    return html.escape(str(v or ''), quote=True)
+
+def write_kml_placemark(kf, name, address, style_id, category_label, lat=None, lon=None):
+    kf.write("    <Placemark>\n")
+    kf.write(f"      <name>{xml_esc(name)}</name>\n")
+    kf.write(f"      <styleUrl>#{style_id}</styleUrl>\n")
+    desc = f"Categorie: {category_label}<br/>Adresse: {xml_esc(address)}"
+    kf.write(f"      <description><![CDATA[{desc}]]></description>\n")
+    if address:
+        kf.write(f"      <address>{xml_esc(address)}</address>\n")
+    if lat is not None and lon is not None:
+        kf.write("      <Point>\n")
+        kf.write(f"        <coordinates>{lon:.6f},{lat:.6f},0</coordinates>\n")
+        kf.write("      </Point>\n")
+    kf.write("    </Placemark>\n")
+
+def write_had_styles(kf):
+    # Match icon/colors/style maps from data/output/had.kml
+    kf.write("""    <Style id="icon-1517-0288D1-normal">
+      <IconStyle>
+        <color>ffd18802</color>
+        <scale>1</scale>
+        <Icon>
+          <href>https://www.gstatic.com/mapspro/images/stock/503-wht-blank_maps.png</href>
+        </Icon>
+      </IconStyle>
+      <LabelStyle>
+        <scale>0</scale>
+      </LabelStyle>
+    </Style>
+    <Style id="icon-1517-0288D1-highlight">
+      <IconStyle>
+        <color>ffd18802</color>
+        <scale>1</scale>
+        <Icon>
+          <href>https://www.gstatic.com/mapspro/images/stock/503-wht-blank_maps.png</href>
+        </Icon>
+      </IconStyle>
+      <LabelStyle>
+        <scale>1</scale>
+      </LabelStyle>
+    </Style>
+    <StyleMap id="icon-1517-0288D1">
+      <Pair>
+        <key>normal</key>
+        <styleUrl>#icon-1517-0288D1-normal</styleUrl>
+      </Pair>
+      <Pair>
+        <key>highlight</key>
+        <styleUrl>#icon-1517-0288D1-highlight</styleUrl>
+      </Pair>
+    </StyleMap>
+    <Style id="icon-1517-BDBDBD-normal">
+      <IconStyle>
+        <color>ffbdbdbd</color>
+        <scale>1</scale>
+        <Icon>
+          <href>https://www.gstatic.com/mapspro/images/stock/503-wht-blank_maps.png</href>
+        </Icon>
+      </IconStyle>
+      <LabelStyle>
+        <scale>0</scale>
+      </LabelStyle>
+    </Style>
+    <Style id="icon-1517-BDBDBD-highlight">
+      <IconStyle>
+        <color>ffbdbdbd</color>
+        <scale>1</scale>
+        <Icon>
+          <href>https://www.gstatic.com/mapspro/images/stock/503-wht-blank_maps.png</href>
+        </Icon>
+      </IconStyle>
+      <LabelStyle>
+        <scale>1</scale>
+      </LabelStyle>
+    </Style>
+    <StyleMap id="icon-1517-BDBDBD">
+      <Pair>
+        <key>normal</key>
+        <styleUrl>#icon-1517-BDBDBD-normal</styleUrl>
+      </Pair>
+      <Pair>
+        <key>highlight</key>
+        <styleUrl>#icon-1517-BDBDBD-highlight</styleUrl>
+      </Pair>
+    </StyleMap>
+    <Style id="icon-1577-BDBDBD-normal">
+      <IconStyle>
+        <color>ffbdbdbd</color>
+        <scale>1</scale>
+        <Icon>
+          <href>https://www.gstatic.com/mapspro/images/stock/503-wht-blank_maps.png</href>
+        </Icon>
+      </IconStyle>
+      <LabelStyle>
+        <scale>0</scale>
+      </LabelStyle>
+    </Style>
+    <Style id="icon-1577-BDBDBD-highlight">
+      <IconStyle>
+        <color>ffbdbdbd</color>
+        <scale>1</scale>
+        <Icon>
+          <href>https://www.gstatic.com/mapspro/images/stock/503-wht-blank_maps.png</href>
+        </Icon>
+      </IconStyle>
+      <LabelStyle>
+        <scale>1</scale>
+      </LabelStyle>
+    </Style>
+    <StyleMap id="icon-1577-BDBDBD">
+      <Pair>
+        <key>normal</key>
+        <styleUrl>#icon-1577-BDBDBD-normal</styleUrl>
+      </Pair>
+      <Pair>
+        <key>highlight</key>
+        <styleUrl>#icon-1577-BDBDBD-highlight</styleUrl>
+      </Pair>
+    </StyleMap>
+    <Style id="icon-1577-FF5252-normal">
+      <IconStyle>
+        <color>ff5252ff</color>
+        <scale>1</scale>
+        <Icon>
+          <href>https://www.gstatic.com/mapspro/images/stock/503-wht-blank_maps.png</href>
+        </Icon>
+      </IconStyle>
+      <LabelStyle>
+        <scale>0</scale>
+      </LabelStyle>
+    </Style>
+    <Style id="icon-1577-FF5252-highlight">
+      <IconStyle>
+        <color>ff5252ff</color>
+        <scale>1</scale>
+        <Icon>
+          <href>https://www.gstatic.com/mapspro/images/stock/503-wht-blank_maps.png</href>
+        </Icon>
+      </IconStyle>
+      <LabelStyle>
+        <scale>1</scale>
+      </LabelStyle>
+    </Style>
+    <StyleMap id="icon-1577-FF5252">
+      <Pair>
+        <key>normal</key>
+        <styleUrl>#icon-1577-FF5252-normal</styleUrl>
+      </Pair>
+      <Pair>
+        <key>highlight</key>
+        <styleUrl>#icon-1577-FF5252-highlight</styleUrl>
+      </Pair>
+    </StyleMap>
+    <Style id="icon-1762-7CB342-nodesc-normal">
+      <IconStyle>
+        <color>ff42b37c</color>
+        <scale>1</scale>
+        <Icon>
+          <href>https://www.gstatic.com/mapspro/images/stock/503-wht-blank_maps.png</href>
+        </Icon>
+      </IconStyle>
+      <LabelStyle>
+        <scale>0</scale>
+      </LabelStyle>
+      <BalloonStyle>
+        <text><![CDATA[<h3>$[name]</h3>]]></text>
+      </BalloonStyle>
+    </Style>
+    <Style id="icon-1762-7CB342-nodesc-highlight">
+      <IconStyle>
+        <color>ff42b37c</color>
+        <scale>1</scale>
+        <Icon>
+          <href>https://www.gstatic.com/mapspro/images/stock/503-wht-blank_maps.png</href>
+        </Icon>
+      </IconStyle>
+      <LabelStyle>
+        <scale>1</scale>
+      </LabelStyle>
+      <BalloonStyle>
+        <text><![CDATA[<h3>$[name]</h3>]]></text>
+      </BalloonStyle>
+    </Style>
+    <StyleMap id="icon-1762-7CB342-nodesc">
+      <Pair>
+        <key>normal</key>
+        <styleUrl>#icon-1762-7CB342-nodesc-normal</styleUrl>
+      </Pair>
+      <Pair>
+        <key>highlight</key>
+        <styleUrl>#icon-1762-7CB342-nodesc-highlight</styleUrl>
+      </Pair>
+    </StyleMap>
+""")
 
 # Build address map: name -> address
 people_csv = []
@@ -406,6 +680,81 @@ else:
             c.alignment=lft() if ci in (1,8) else ctr()
             c.border=bd()
 
+map_rows = []
+for p in potential_hosts:
+    latlon = geocode_address(p["addr"], cfg)
+    tags = []
+    if p["can_drinks"] and p["name"] not in hosted_drinks:
+        tags.append("Apéros non desservis")
+    if p["name"] in hosted_drinks:
+        tags.append("Apéros réels")
+    if p["can_dinner"] and p["name"] not in hosted_dinner:
+        tags.append("Dîners non desservis")
+    if p["name"] in hosted_dinner:
+        tags.append("Dîners réels")
+    map_rows.append({
+        "label": p["name"],
+        "addr": p["addr"],
+        "lat": (latlon[0] if latlon else None),
+        "lon": (latlon[1] if latlon else None),
+        "tags": " | ".join(tags),
+        "can_drinks": p["can_drinks"],
+        "can_dinner": p["can_dinner"],
+        "actual_drinks": (p["name"] in hosted_drinks),
+        "actual_dinner": (p["name"] in hosted_dinner),
+    })
+
+map_rows.sort(key=lambda x: x["label"].casefold())
+
+# Export a real KML source file for Google My Maps
+map_kml_path = f"{os.path.splitext(out)[0]}_hotes_potentiels_mymaps.kml"
+with open(map_kml_path, "w", encoding="utf-8") as kf:
+    kf.write('<?xml version="1.0" encoding="UTF-8"?>\n')
+    kf.write('<kml xmlns="http://www.opengis.net/kml/2.2">\n')
+    kf.write('  <Document>\n')
+    kf.write(f'    <name>{xml_esc(event_title)}: apéros - dîners</name>\n')
+
+    write_had_styles(kf)
+
+    categories = [
+        ("Apéros non desservis", "icon-1517-BDBDBD", lambda m: m["can_drinks"] and not m["actual_drinks"], "Apero potentiel non desservi"),
+        ("Apéros réels", "icon-1517-0288D1", lambda m: m["actual_drinks"], "Apero reel"),
+        ("Dîners non desservis", "icon-1577-BDBDBD", lambda m: m["can_dinner"] and not m["actual_dinner"], "Diner potentiel non desservi"),
+        ("Dîners réels", "icon-1577-FF5252", lambda m: m["actual_dinner"], "Diner reel"),
+    ]
+    for category_label, style_id, pred, desc_label in categories:
+        kf.write('    <Folder>\n')
+        kf.write(f'      <name>{xml_esc(category_label)}</name>\n')
+        for m in map_rows:
+            if pred(m):
+                write_kml_placemark(
+                    kf,
+                    name=m["label"],
+                    address=m["addr"],
+                    style_id=style_id,
+                    category_label=desc_label,
+                    lat=m["lat"],
+                    lon=m["lon"],
+                )
+        kf.write('    </Folder>\n')
+
+    dessert_latlon = geocode_address(dessert_addr, cfg)
+    kf.write('    <Folder>\n')
+    kf.write('      <name>Dessert</name>\n')
+    write_kml_placemark(
+        kf,
+        name=cfg.get("dessert_address", "Dessert"),
+        address=dessert_addr,
+        style_id="icon-1762-7CB342-nodesc",
+        category_label="Dessert",
+        lat=(dessert_latlon[0] if dessert_latlon else None),
+        lon=(dessert_latlon[1] if dessert_latlon else None),
+    )
+    kf.write('    </Folder>\n')
+
+    kf.write('  </Document>\n')
+    kf.write('</kml>\n')
+
 # ═══ SHEET 5 — Stats ═════════════════════════════════════════════════════════
 ws5=wb.create_sheet("Statistiques")
 ws5.sheet_view.showGridLines=False
@@ -475,5 +824,11 @@ cw(ws5, 3, max(30, min(60, max_col3_len + 4)))
 out_dir = os.path.dirname(out)
 if out_dir:
     os.makedirs(out_dir, exist_ok=True)
+geo_cache_dir = os.path.dirname(geocode_cache_path)
+if geo_cache_dir:
+    os.makedirs(geo_cache_dir, exist_ok=True)
+with open(geocode_cache_path, "w") as gf:
+    json.dump(geocode_cache, gf, ensure_ascii=False, indent=2)
 wb.save(out)
 print(f"Excel saved: {out}")
+print(f"My Maps KML saved: {map_kml_path}")

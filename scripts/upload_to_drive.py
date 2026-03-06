@@ -27,6 +27,17 @@ from googleapiclient.errors import HttpError
 SCOPES = ["https://www.googleapis.com/auth/drive"]
 
 
+def detect_mime_type(path):
+    ext = os.path.splitext(path)[1].lower()
+    if ext == ".xlsx":
+        return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    if ext == ".kml":
+        return "application/vnd.google-earth.kml+xml"
+    if ext == ".csv":
+        return "text/csv"
+    return "application/octet-stream"
+
+
 def parse_http_error(err):
     reason = ""
     message = str(err)
@@ -73,15 +84,18 @@ def load_oauth_credentials(client_secret_path, token_path):
 
 
 def main():
-    if len(sys.argv)<2: print("Usage: upload_to_drive.py FILE"); sys.exit(1)
-    fp=sys.argv[1]
-    if not os.path.exists(fp): print("Error: "+fp+" not found"); sys.exit(1)
+    if len(sys.argv) < 2:
+        print("Usage: upload_to_drive.py FILE [FILE ...]")
+        sys.exit(1)
+    files = sys.argv[1:]
+    for fp in files:
+        if not os.path.exists(fp):
+            print("Error: " + fp + " not found")
+            sys.exit(1)
     cfg=yaml.safe_load(open("data/input/config.yaml")).get("google_drive", {})
     client_secret_path = cfg.get("client_secret_path", "credentials/client_secret.json")
     token_path = cfg.get("token_path", "credentials/token.json")
     fid=cfg.get("folder_id","")
-    # Use the local output filename (timestamped) on Drive too.
-    fn=os.path.basename(fp)
     if not fid: print("Error: folder_id not set in config.yaml"); sys.exit(1)
 
     creds = load_oauth_credentials(client_secret_path, token_path)
@@ -112,31 +126,33 @@ def main():
         print("Hint: check internet/DNS connectivity and retry.")
         sys.exit(1)
 
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    media=MediaFileUpload(fp,mimetype=mime,resumable=True)
-    try:
-        r=svc.files().create(
-            body={"name":fn,"parents":[fid]},
-            media_body=media,
-            fields="id,webViewLink",
-            supportsAllDrives=True
-        ).execute()
-        print("Uploaded to Drive: "+fn)
-        print("Link: "+r.get("webViewLink",""))
-    except HttpError as e:
-        reason, message = parse_http_error(e)
-        print("Drive API error: " + str(e))
-        if reason in {"notFound", "insufficientFilePermissions"}:
-            print("Hint: your authenticated account may not have access to this folder_id: " + fid)
-        elif message:
-            print("Details: " + message)
-        sys.exit(1)
-    except google_auth_exceptions.TransportError as e:
-        print("Drive network error: " + str(e))
-        print("Hint: check internet/DNS connectivity and retry.")
-        sys.exit(1)
-    except Exception as e:
-        print("Drive network error: " + str(e))
-        print("Hint: check internet/DNS connectivity and retry.")
-        sys.exit(1)
+    for fp in files:
+        fn = os.path.basename(fp)
+        mime = detect_mime_type(fp)
+        media=MediaFileUpload(fp,mimetype=mime,resumable=True)
+        try:
+            r=svc.files().create(
+                body={"name":fn,"parents":[fid]},
+                media_body=media,
+                fields="id,webViewLink",
+                supportsAllDrives=True
+            ).execute()
+            print("Uploaded to Drive: "+fn)
+            print("Link: "+r.get("webViewLink",""))
+        except HttpError as e:
+            reason, message = parse_http_error(e)
+            print("Drive API error: " + str(e))
+            if reason in {"notFound", "insufficientFilePermissions"}:
+                print("Hint: your authenticated account may not have access to this folder_id: " + fid)
+            elif message:
+                print("Details: " + message)
+            sys.exit(1)
+        except google_auth_exceptions.TransportError as e:
+            print("Drive network error: " + str(e))
+            print("Hint: check internet/DNS connectivity and retry.")
+            sys.exit(1)
+        except Exception as e:
+            print("Drive network error: " + str(e))
+            print("Hint: check internet/DNS connectivity and retry.")
+            sys.exit(1)
 if __name__=="__main__": main()
