@@ -14,6 +14,7 @@ if missing:
 
 import csv
 import yaml
+from datetime import date
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
@@ -98,14 +99,74 @@ def walk(addr_from, addr_to):
     reverse = f"{addr_to}|||{addr_from}"
     return round(dist.get(legacy, dist.get(reverse, 0)) / 60.0, 1)
 
+def yn(v):
+    return str(v or '').strip().lower() in {'yes', 'y', 'true', '1', 'oui'}
+
+def pick(r, *keys, default=''):
+    for k in keys:
+        if k in r and str(r[k]).strip() != '':
+            return r[k]
+    return default
+
+def parse_int(v, default=None):
+    try:
+        return int(float(str(v).strip()))
+    except (TypeError, ValueError):
+        return default
+
 # Build address map: name -> address
 people_csv = []
+current_year = date.today().year
 with open(people_path) as f:
     for r in csv.DictReader(f):
-        addr = f"{r['postal_address']} {r['postal_code']} {r['city']}"
-        people_csv.append({'name': r['name'], 'addr': addr})
+        addr = f"{pick(r, 'postal_address')} {pick(r, 'postal_code')} {pick(r, 'city')}".strip()
+        can_drinks = yn(pick(r, 'recieving_for_drinks', 'receiving_for_drinks'))
+        can_dinner = yn(pick(r, 'recieving_for_dinner', 'receiving_for_dinner'))
+        yob = parse_int(pick(r, 'year_of_birth'), default=None)
+        people_csv.append({
+            'name': pick(r, 'name'),
+            'gender': pick(r, 'gender', default=''),
+            'year_of_birth': yob,
+            'age': (current_year - yob) if yob is not None else None,
+            'addr': addr,
+            'can_drinks': can_drinks,
+            'can_dinner': can_dinner,
+            'max_drinks': parse_int(pick(r, 'number_max_recieving_for_drinks', 'number_max_receiving_for_drinks', default='0'), default=0),
+            'max_dinner': parse_int(pick(r, 'number_max_recieving_for_dinner', 'number_max_receiving_for_dinner', default='0'), default=0),
+        })
 
 addr_map = {p['name']: p['addr'] for p in people_csv}
+person_info = {p['name']: p for p in people_csv}
+
+def group_stats_text(guest_rows):
+    ages = []
+    m_count = 0
+    f_count = 0
+    for g in guest_rows:
+        info = person_info.get(g['name'])
+        if not info:
+            continue
+        if info.get('age') is not None:
+            ages.append(info['age'])
+        gender = str(info.get('gender', '')).strip().lower()
+        if gender in {'m', 'male', 'homme', 'garcon', 'garçon'}:
+            m_count += 1
+        elif gender in {'f', 'female', 'femme', 'fille'}:
+            f_count += 1
+
+    age_txt = "Age min/moy/max: n/d"
+    if ages:
+        avg_age = sum(ages) / len(ages)
+        age_txt = f"Age min/moy/max: {min(ages)}/{avg_age:.1f}/{max(ages)} ans"
+
+    mf_total = m_count + f_count
+    mix_txt = "Mixite: n/d"
+    if mf_total > 0:
+        m_pct = 100.0 * m_count / mf_total
+        f_pct = 100.0 * f_count / mf_total
+        mix_txt = f"Mixite: {m_pct:.0f}% garcons / {f_pct:.0f}% filles"
+
+    return f"{age_txt}  |  {mix_txt}"
 
 # Compute walk times for each person
 for r in rows:
@@ -134,7 +195,7 @@ ws.row_dimensions[1].height = 40
 
 hdrs   = ["👤 Nom","🍸 Aperitif chez","🍽️ Diner chez","🚶 Maison→Apero (min)","🚶 Apero→Diner (min)","🚶 Diner→Dessert (min)","📊 Total marche (min)"]
 colors = ["1D4ED8","1D4ED8","C2410C","059669","059669","7C3AED","B91C1C"]
-widths = [34,34,34,18,18,20,17]
+widths = [42,34,34,18,18,20,17]
 ws.row_dimensions[2].height = 26
 for ci,(h,c,w) in enumerate(zip(hdrs,colors,widths),1):
     cell = ws.cell(row=2,column=ci,value=h)
@@ -153,14 +214,25 @@ for ri,r in enumerate(rows,3):
         c.alignment=lft() if ci==1 else ctr(); c.border=bd()
         if ci>=4: c.number_format='0.0'
 
-tr = len(rows)+3
-ws.row_dimensions[tr].height = 22
-ws.merge_cells(f"A{tr}:C{tr}")
-ws[f"A{tr}"]="MAXIMUM"; ws[f"A{tr}"].font=hfont(color='000000')
-ws[f"A{tr}"].fill=fill("E3F2FD"); ws[f"A{tr}"].alignment=ctr(); ws[f"A{tr}"].border=bd()
+avg_row = len(rows)+3
+ws.row_dimensions[avg_row].height = 22
+ws.merge_cells(f"A{avg_row}:C{avg_row}")
+ws[f"A{avg_row}"]="MOYENNE"; ws[f"A{avg_row}"].font=hfont(color='000000')
+ws[f"A{avg_row}"].fill=fill("E8F5E9"); ws[f"A{avg_row}"].alignment=ctr(); ws[f"A{avg_row}"].border=bd()
 for ci in range(4,8):
     col=get_column_letter(ci)
-    c=ws.cell(row=tr,column=ci,value=f"=MAX({col}3:{col}{len(rows)+2})")
+    c=ws.cell(row=avg_row,column=ci,value=f"=AVERAGE({col}3:{col}{len(rows)+2})")
+    c.font=hfont(color='000000',size=10); c.fill=fill("E8F5E9")
+    c.number_format='0.0'; c.alignment=ctr(); c.border=bd()
+
+max_row = len(rows)+4
+ws.row_dimensions[max_row].height = 22
+ws.merge_cells(f"A{max_row}:C{max_row}")
+ws[f"A{max_row}"]="MAXIMUM"; ws[f"A{max_row}"].font=hfont(color='000000')
+ws[f"A{max_row}"].fill=fill("E3F2FD"); ws[f"A{max_row}"].alignment=ctr(); ws[f"A{max_row}"].border=bd()
+for ci in range(4,8):
+    col=get_column_letter(ci)
+    c=ws.cell(row=max_row,column=ci,value=f"=MAX({col}3:{col}{len(rows)+2})")
     c.font=hfont(color='000000',size=10); c.fill=fill("E3F2FD")
     c.number_format='0.0'; c.alignment=ctr(); c.border=bd()
 
@@ -171,12 +243,12 @@ ws.conditional_formatting.add(f"G3:G{len(rows)+2}",
 from collections import defaultdict
 ws2 = wb.create_sheet("Aperitif")
 ws2.sheet_view.showGridLines = False
-ws2.merge_cells("A1:C1")
+ws2.merge_cells("A1:D1")
 ws2["A1"]="🍸 APERITIF — Repartition par hote"
 ws2["A1"].font=Font(name='Arial',bold=True,size=14,color='FFFFFF')
 ws2["A1"].fill=fill("1565C0"); ws2["A1"].alignment=ctr()
 ws2.row_dimensions[1].height=30
-for col,w in zip([1,2,3],[34,20,32]): cw(ws2,col,w)
+for col,w in zip([1,2,3,4],[40,20,36,20]): cw(ws2,col,w)
 
 drinks_groups = defaultdict(list)
 for r in rows:
@@ -188,18 +260,23 @@ row=2
 for host,guests in drinks_groups.items():
     host_addr = addr_map.get(host,'')
     ws2.row_dimensions[row].height=26
-    ws2.merge_cells(f"A{row}:C{row}")
+    ws2.merge_cells(f"A{row}:D{row}")
     ws2[f"A{row}"]=f"Chez {host}  —  {host_addr}"
     ws2[f"A{row}"].font=Font(name='Arial',bold=True,size=11,color='FFFFFF')
     ws2[f"A{row}"].fill=fill("0D47A1"); ws2[f"A{row}"].alignment=lft(); row+=1
+    ws2.row_dimensions[row].height=18
+    ws2.merge_cells(f"A{row}:D{row}")
+    ws2[f"A{row}"]=group_stats_text(guests)
+    ws2[f"A{row}"].font=Font(name='Arial',bold=True,size=9,color='0D47A1')
+    ws2[f"A{row}"].fill=fill("BBDEFB"); ws2[f"A{row}"].alignment=lft(); ws2[f"A{row}"].border=bd(); row+=1
     ws2.row_dimensions[row].height=20
-    for ci,h in enumerate(["👥 Participant","🚶 Maison → ici (min)","🍽️ Diner chez"],1):
+    for ci,h in enumerate(["👥 Participant","🚶 Maison → ici (min)","🍽️ Diner chez","🚶 Ici → Diner (min)"],1):
         c=ws2.cell(row=row,column=ci,value=h)
         c.font=hfont(size=9); c.fill=fill("42A5F5"); c.alignment=ctr(); c.border=bd()
     row+=1
     if not guests:
         ws2.row_dimensions[row].height=18
-        for ci,v in enumerate(["(aucun participant)","",""],1):
+        for ci,v in enumerate(["(aucun participant)","","",""],1):
             c=ws2.cell(row=row,column=ci,value=v)
             c.fill=fill("E3F2FD"); c.font=cfont(bold=(ci==1))
             c.alignment=lft() if ci==1 else ctr(); c.border=bd()
@@ -207,23 +284,23 @@ for host,guests in drinks_groups.items():
     else:
         for g in guests:
             ws2.row_dimensions[row].height=18
-            for ci,v in enumerate([g['name'],g['w1'],g['dinner_host']],1):
+            for ci,v in enumerate([g['name'],g['w1'],g['dinner_host'],g['w2']],1):
                 c=ws2.cell(row=row,column=ci,value=v)
                 c.fill=fill("E3F2FD"); c.font=cfont(bold=(ci==1))
                 c.alignment=lft() if ci in (1,3) else ctr(); c.border=bd()
-                if ci==2: c.number_format='0.0'
+                if ci in (2,4): c.number_format='0.0'
             row+=1
     row+=1
 
 # ═══ SHEET 3 — Diner ═════════════════════════════════════════════════════════
 ws3=wb.create_sheet("Diner")
 ws3.sheet_view.showGridLines=False
-ws3.merge_cells("A1:C1")
+ws3.merge_cells("A1:D1")
 ws3["A1"]="🍽️ DINER — Repartition par hote"
 ws3["A1"].font=Font(name='Arial',bold=True,size=14,color='FFFFFF')
 ws3["A1"].fill=fill("E65100"); ws3["A1"].alignment=ctr()
 ws3.row_dimensions[1].height=30
-for col,w in zip([1,2,3],[32,22,30]): cw(ws3,col,w)
+for col,w in zip([1,2,3,4],[40,22,34,20]): cw(ws3,col,w)
 
 dinner_groups = defaultdict(list)
 for r in rows:
@@ -235,18 +312,23 @@ row=2
 for host,guests in dinner_groups.items():
     host_addr=addr_map.get(host,'')
     ws3.row_dimensions[row].height=26
-    ws3.merge_cells(f"A{row}:C{row}")
+    ws3.merge_cells(f"A{row}:D{row}")
     ws3[f"A{row}"]=f"Chez {host}  —  {host_addr}"
     ws3[f"A{row}"].font=Font(name='Arial',bold=True,size=11,color='FFFFFF')
     ws3[f"A{row}"].fill=fill("BF360C"); ws3[f"A{row}"].alignment=lft(); row+=1
+    ws3.row_dimensions[row].height=18
+    ws3.merge_cells(f"A{row}:D{row}")
+    ws3[f"A{row}"]=group_stats_text(guests)
+    ws3[f"A{row}"].font=Font(name='Arial',bold=True,size=9,color='BF360C')
+    ws3[f"A{row}"].fill=fill("FFE0B2"); ws3[f"A{row}"].alignment=lft(); ws3[f"A{row}"].border=bd(); row+=1
     ws3.row_dimensions[row].height=20
-    for ci,h in enumerate(["👥 Participant","🚶 Apero → ici (min)","🍸 Apero chez"],1):
+    for ci,h in enumerate(["👥 Participant","🚶 Apero → ici (min)","🍸 Apero chez","🚶 Ici → Dessert (min)"],1):
         c=ws3.cell(row=row,column=ci,value=h)
         c.font=hfont(size=9); c.fill=fill("FF7043"); c.alignment=ctr(); c.border=bd()
     row+=1
     if not guests:
         ws3.row_dimensions[row].height=18
-        for ci,v in enumerate(["(aucun participant)","",""],1):
+        for ci,v in enumerate(["(aucun participant)","","",""],1):
             c=ws3.cell(row=row,column=ci,value=v)
             c.fill=fill("FFF3E0"); c.font=cfont(bold=(ci==1))
             c.alignment=lft() if ci==1 else ctr(); c.border=bd()
@@ -254,15 +336,77 @@ for host,guests in dinner_groups.items():
     else:
         for g in guests:
             ws3.row_dimensions[row].height=18
-            for ci,v in enumerate([g['name'],g['w2'],g['drinks_host']],1):
+            for ci,v in enumerate([g['name'],g['w2'],g['drinks_host'],g['w3']],1):
                 c=ws3.cell(row=row,column=ci,value=v)
                 c.fill=fill("FFF3E0")
                 c.font=cfont(bold=(ci==1)); c.alignment=lft() if ci in (1,3) else ctr(); c.border=bd()
-                if ci==2: c.number_format='0.0'
+                if ci in (2,4): c.number_format='0.0'
             row+=1
     row+=1
 
-# ═══ SHEET 4 — Stats ═════════════════════════════════════════════════════════
+# ═══ SHEET 4 — Hosts potential vs actual ═════════════════════════════════════
+ws4=wb.create_sheet("Hotes potentiels")
+ws4.sheet_view.showGridLines=False
+ws4.freeze_panes="A3"
+for col,w in zip([1,2,3,4,5,6,7,8],[30,14,16,14,16,12,12,40]): cw(ws4,col,w)
+ws4.merge_cells("A1:H1")
+ws4["A1"]="🏠 HOTES POTENTIELS VS REELS"
+ws4["A1"].font=Font(name='Arial',bold=True,size=14,color='FFFFFF')
+ws4["A1"].fill=fill("1B5E20"); ws4["A1"].alignment=ctr(); ws4.row_dimensions[1].height=30
+
+headers = [
+    "👤 Nom",
+    "🍸 Apero possible",
+    "✅ A recu apero",
+    "🍽️ Diner possible",
+    "✅ A recu diner",
+    "📦 Cap. apero",
+    "📦 Cap. diner",
+    "📍 Adresse",
+]
+ws4.row_dimensions[2].height=24
+for ci,h in enumerate(headers,1):
+    c=ws4.cell(row=2,column=ci,value=h)
+    c.font=hfont(size=9); c.fill=fill("2E7D32"); c.alignment=ctr(); c.border=bd()
+
+hosted_drinks = set(drinks_groups.keys())
+hosted_dinner = set(dinner_groups.keys())
+potential_hosts = [p for p in people_csv if p['can_drinks'] or p['can_dinner']]
+potential_hosts.sort(key=lambda p: p['name'].casefold())
+
+if not potential_hosts:
+    ws4.row_dimensions[3].height=20
+    ws4.merge_cells("A3:H3")
+    c = ws4["A3"]
+    c.value = "(aucun hote potentiel dans le fichier participants)"
+    c.font = cfont(bold=True, size=10)
+    c.fill = fill("E8F5E9")
+    c.alignment = ctr()
+    c.border = bd()
+else:
+    for ri,p in enumerate(potential_hosts,3):
+        ws4.row_dimensions[ri].height=19
+        bg = fill("E8F5E9" if ri%2==0 else "FFFFFF")
+        apero_real = "-" if not p['can_drinks'] else ("Oui" if p['name'] in hosted_drinks else "Non")
+        diner_real = "-" if not p['can_dinner'] else ("Oui" if p['name'] in hosted_dinner else "Non")
+        vals = [
+            p['name'],
+            "Oui" if p['can_drinks'] else "Non",
+            apero_real,
+            "Oui" if p['can_dinner'] else "Non",
+            diner_real,
+            p['max_drinks'] if p['can_drinks'] else "-",
+            p['max_dinner'] if p['can_dinner'] else "-",
+            p['addr'],
+        ]
+        for ci,v in enumerate(vals,1):
+            c=ws4.cell(row=ri,column=ci,value=v)
+            c.fill=bg
+            c.font=cfont(bold=(ci==1),size=10)
+            c.alignment=lft() if ci in (1,8) else ctr()
+            c.border=bd()
+
+# ═══ SHEET 5 — Stats ═════════════════════════════════════════════════════════
 ws5=wb.create_sheet("Statistiques")
 ws5.sheet_view.showGridLines=False
 for col,w in zip([1,2,3],[36,22,30]): cw(ws5,col,w)
