@@ -37,6 +37,10 @@ Avec les deux :
 Les fichiers de sortie sont timestampes et non ecrases :
 `data/output/result_YYYYMMDD_HHMMSS.{txt,csv,xlsx}`.
 
+Des fichiers KML Google My Maps sont aussi generes :
+- `data/output/result_YYYYMMDD_HHMMSS_hotes_potentiels_mymaps.kml`
+- `data/output/result_YYYYMMDD_HHMMSS_participants_mymaps.kml`
+
 ---
 
 ## Structure

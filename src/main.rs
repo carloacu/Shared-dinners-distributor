@@ -185,6 +185,11 @@ fn main() -> Result<()> {
     } else {
         format!("{}_hotes_potentiels_mymaps.kml", xlsx_output)
     };
+    let participants_kml_output = if let Some(prefix) = xlsx_output.strip_suffix(".xlsx") {
+        format!("{}_participants_mymaps.kml", prefix)
+    } else {
+        format!("{}_participants_mymaps.kml", xlsx_output)
+    };
 
     info!("Writing output...");
     output::write_result(&best, &people, &dessert_addr, &travel, &cfg, &txt_output)?;
@@ -225,6 +230,14 @@ fn main() -> Result<()> {
             files_to_upload.push(kml_output.clone());
         } else {
             log::warn!("Skipping Drive upload for missing file: {}", kml_output);
+        }
+        if std::path::Path::new(&participants_kml_output).exists() {
+            files_to_upload.push(participants_kml_output.clone());
+        } else {
+            log::warn!(
+                "Skipping Drive upload for missing file: {}",
+                participants_kml_output
+            );
         }
 
         if files_to_upload.is_empty() {

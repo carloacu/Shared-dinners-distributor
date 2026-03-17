@@ -274,6 +274,40 @@ def write_had_styles(kf):
         <styleUrl>#icon-1517-0288D1-highlight</styleUrl>
       </Pair>
     </StyleMap>
+    <Style id="icon-1603-0288D1-normal">
+      <IconStyle>
+        <color>ffd18802</color>
+        <scale>1</scale>
+        <Icon>
+          <href>https://www.gstatic.com/mapspro/images/stock/503-wht-blank_maps.png</href>
+        </Icon>
+      </IconStyle>
+      <LabelStyle>
+        <scale>0</scale>
+      </LabelStyle>
+    </Style>
+    <Style id="icon-1603-0288D1-highlight">
+      <IconStyle>
+        <color>ffd18802</color>
+        <scale>1</scale>
+        <Icon>
+          <href>https://www.gstatic.com/mapspro/images/stock/503-wht-blank_maps.png</href>
+        </Icon>
+      </IconStyle>
+      <LabelStyle>
+        <scale>1</scale>
+      </LabelStyle>
+    </Style>
+    <StyleMap id="icon-1603-0288D1">
+      <Pair>
+        <key>normal</key>
+        <styleUrl>#icon-1603-0288D1-normal</styleUrl>
+      </Pair>
+      <Pair>
+        <key>highlight</key>
+        <styleUrl>#icon-1603-0288D1-highlight</styleUrl>
+      </Pair>
+    </StyleMap>
     <Style id="icon-1517-BDBDBD-normal">
       <IconStyle>
         <color>ffbdbdbd</color>
@@ -785,6 +819,41 @@ with open(map_kml_path, "w", encoding="utf-8") as kf:
     kf.write('  </Document>\n')
     kf.write('</kml>\n')
 
+participants_kml_path = f"{os.path.splitext(out)[0]}_participants_mymaps.kml"
+participant_rows = []
+for p in sorted(people_csv, key=lambda x: x["name"].casefold()):
+    latlon = geocode_address(p["addr"], cfg)
+    participant_rows.append({
+        "label": p["name"],
+        "addr": p["addr"],
+        "lat": (latlon[0] if latlon else None),
+        "lon": (latlon[1] if latlon else None),
+    })
+
+with open(participants_kml_path, "w", encoding="utf-8") as kf:
+    kf.write('<?xml version="1.0" encoding="UTF-8"?>\n')
+    kf.write('<kml xmlns="http://www.opengis.net/kml/2.2">\n')
+    kf.write('  <Document>\n')
+    kf.write(f'    <name>{xml_esc(event_title)}: participants</name>\n')
+
+    write_had_styles(kf)
+
+    kf.write('    <Folder>\n')
+    kf.write('      <name>Participants</name>\n')
+    for p in participant_rows:
+        write_kml_placemark(
+            kf,
+            name=p["label"],
+            address=p["addr"],
+            style_id="icon-1603-0288D1",
+            category_label="Participant",
+            lat=p["lat"],
+            lon=p["lon"],
+        )
+    kf.write('    </Folder>\n')
+    kf.write('  </Document>\n')
+    kf.write('</kml>\n')
+
 # ═══ SHEET 5 — Stats ═════════════════════════════════════════════════════════
 ws5=wb.create_sheet("Statistiques")
 ws5.sheet_view.showGridLines=False
@@ -862,3 +931,4 @@ with open(geocode_cache_path, "w") as gf:
 wb.save(out)
 print(f"Excel saved: {out}")
 print(f"My Maps KML saved: {map_kml_path}")
+print(f"Participants KML saved: {participants_kml_path}")
