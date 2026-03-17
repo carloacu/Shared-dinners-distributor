@@ -20,24 +20,26 @@ struct OptimizationRunResult {
     best_score: f64,
 }
 
+#[derive(Debug)]
+struct CliArgs {
+    people_path: String,
+    constraints_path: Option<String>,
+    previous_distribution_path: Option<String>,
+}
+
 fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     info!("=== Progressive Dinner Optimizer ===");
-    let args: Vec<String> = env::args().collect();
-    let people_path = args
-        .get(1)
-        .cloned()
-        .unwrap_or_else(|| "data/input/people.csv".to_string());
-    let constraints_path = args.get(2).cloned();
+    let cli = parse_args()?;
 
     // 1. Load configuration
     info!("Loading configuration...");
     let cfg = config::Config::load("data/input/config.yaml")?;
 
     // 2. Load people
-    info!("Loading people from CSV: {}", people_path);
-    let people = model::load_people(&people_path)?;
+    info!("Loading people from CSV: {}", cli.people_path);
+    let people = model::load_people(&cli.people_path)?;
     info!("Loaded {} persons in {} group(s)", people.len(), {
         let mut ids: Vec<u32> = people.iter().map(|p| p.group_id).collect();
         ids.dedup();
@@ -45,7 +47,7 @@ fn main() -> Result<()> {
     });
 
     // 3. Optional constraints
-    let raw_constraints = if let Some(path) = constraints_path.as_deref() {
+    let raw_constraints = if let Some(path) = cli.constraints_path.as_deref() {
         info!("Loading constraints from CSV: {}", path);
         model::load_constraints(path)?
     } else {
@@ -60,6 +62,18 @@ fn main() -> Result<()> {
             raw_constraints.len()
         );
     }
+
+    let previous_distribution = if let Some(path) = cli.previous_distribution_path.as_deref() {
+        info!("Loading previous distribution from CSV: {}", path);
+        let previous = model::load_previous_distribution(path)?;
+        if previous.is_empty() {
+            info!("Previous distribution file parsed, but contained no reusable history.");
+        }
+        Some(previous)
+    } else {
+        info!("No previous distribution CSV provided.");
+        None
+    };
 
     // 4. Resolve candidate hosts
     let hosts_drinks: Vec<usize> = people
@@ -118,6 +132,7 @@ fn main() -> Result<()> {
             &hosts_dinner,
             &travel,
             &cfg,
+            previous_distribution.as_ref(),
             &constraints,
         )?
     } else {
@@ -128,6 +143,7 @@ fn main() -> Result<()> {
             &hosts_dinner,
             &travel,
             &cfg,
+            previous_distribution.as_ref(),
             &constraints,
         )?
     };
@@ -186,7 +202,7 @@ fn main() -> Result<()> {
         .arg("scripts/make_xlsx.py")
         .arg(&csv_output)
         .arg(&xlsx_output)
-        .arg(&people_path)
+        .arg(&cli.people_path)
         .status();
     match xlsx_status {
         Ok(s) if s.success() => info!("Excel report generated: {}", xlsx_output),
@@ -288,6 +304,73 @@ fn ensure_hosts_present(hosts: &mut Vec<usize>, required: &[usize]) {
     hosts.sort_unstable();
 }
 
+fn parse_args() -> Result<CliArgs> {
+    let mut people_path: Option<String> = None;
+    let mut constraints_path: Option<String> = None;
+    let mut previous_distribution_path: Option<String> = None;
+
+    let mut args = env::args().skip(1);
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "-h" | "--help" => {
+                print_usage();
+                std::process::exit(0);
+            }
+            "--constraints" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| anyhow!("Missing value after --constraints"))?;
+                constraints_path = Some(value);
+            }
+            "--previous-distribution" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| anyhow!("Missing value after --previous-distribution"))?;
+                previous_distribution_path = Some(value);
+            }
+            _ if arg.starts_with("--constraints=") => {
+                constraints_path = Some(arg["--constraints=".len()..].to_string());
+            }
+            _ if arg.starts_with("--previous-distribution=") => {
+                previous_distribution_path =
+                    Some(arg["--previous-distribution=".len()..].to_string());
+            }
+            _ if arg.starts_with('-') => {
+                return Err(anyhow!("Unknown option: {}", arg));
+            }
+            _ if people_path.is_none() => {
+                people_path = Some(arg);
+            }
+            _ if constraints_path.is_none() => {
+                constraints_path = Some(arg);
+            }
+            _ => {
+                return Err(anyhow!("Unexpected positional argument: {}", arg));
+            }
+        }
+    }
+
+    Ok(CliArgs {
+        people_path: people_path.unwrap_or_else(|| "data/input/people.csv".to_string()),
+        constraints_path,
+        previous_distribution_path,
+    })
+}
+
+fn print_usage() {
+    eprintln!(
+        "\
+Usage:
+  cargo run --release -- <people.csv> [--constraints <constraints.csv>] [--previous-distribution <previous_result.csv>]
+
+Examples:
+  cargo run --release -- data/input/people/people_2.csv
+  cargo run --release -- data/input/people/people_2.csv --constraints data/input/constraints/constraints.csv
+  cargo run --release -- data/input/people/people_2.csv --previous-distribution data/input/previous_distribution/example_previous_result.csv
+"
+    );
+}
+
 fn run_iterations_sequential(
     total_runs: usize,
     people: &[model::Person],
@@ -295,6 +378,7 @@ fn run_iterations_sequential(
     hosts_dinner: &[usize],
     travel: &geo::TravelMatrix,
     cfg: &config::Config,
+    previous_distribution: Option<&model::PreviousDistribution>,
     constraints: &solver::ResolvedConstraints,
 ) -> Result<Vec<OptimizationRunResult>> {
     let mut results = Vec::with_capacity(total_runs);
@@ -307,6 +391,7 @@ fn run_iterations_sequential(
             hosts_dinner,
             travel,
             cfg,
+            previous_distribution,
             constraints,
             true,
         )?);
@@ -322,6 +407,7 @@ fn run_iterations_parallel(
     hosts_dinner: &[usize],
     travel: &geo::TravelMatrix,
     cfg: &config::Config,
+    previous_distribution: Option<&model::PreviousDistribution>,
     constraints: &solver::ResolvedConstraints,
 ) -> Result<Vec<OptimizationRunResult>> {
     let next_run = AtomicUsize::new(0);
@@ -345,6 +431,7 @@ fn run_iterations_parallel(
                     hosts_dinner,
                     travel,
                     cfg,
+                    previous_distribution,
                     constraints,
                     false,
                 );
@@ -375,6 +462,7 @@ fn run_single_iteration(
     hosts_dinner: &[usize],
     travel: &geo::TravelMatrix,
     cfg: &config::Config,
+    previous_distribution: Option<&model::PreviousDistribution>,
     constraints: &solver::ResolvedConstraints,
     log_sa_progress: bool,
 ) -> Result<OptimizationRunResult> {
@@ -385,7 +473,7 @@ fn run_single_iteration(
         );
     }
     let initial = solver::find_initial_solution(people, hosts_drinks, hosts_dinner, cfg)?;
-    let initial_score = solver::evaluate(&initial, people, travel, cfg);
+    let initial_score = solver::evaluate(&initial, people, travel, cfg, previous_distribution);
     if log_sa_progress {
         info!(
             "Run {}/{}: initial score {:.4}",
@@ -401,7 +489,13 @@ fn run_single_iteration(
         cfg,
         constraints,
     )?;
-    let constrained_initial_score = solver::evaluate(&constrained_initial, people, travel, cfg);
+    let constrained_initial_score = solver::evaluate(
+        &constrained_initial,
+        people,
+        travel,
+        cfg,
+        previous_distribution,
+    );
     if log_sa_progress {
         info!(
             "Run {}/{}: initial score after hard-constraint repair {:.4}",
@@ -420,10 +514,11 @@ fn run_single_iteration(
         hosts_dinner,
         travel,
         cfg,
+        previous_distribution,
         constraints,
         log_sa_progress,
     )?;
-    let best_score = solver::evaluate(&best_solution, people, travel, cfg);
+    let best_score = solver::evaluate(&best_solution, people, travel, cfg, previous_distribution);
     info!(
         "Run {}/{}: completed with best score {:.4}",
         run_index, total_runs, best_score

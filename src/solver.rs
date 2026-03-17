@@ -1,6 +1,9 @@
 use crate::config::Config;
 use crate::geo::TravelMatrix;
-use crate::model::{group_members, unique_groups, Gender, Person, PersonConstraint};
+use crate::model::{
+    group_members, normalize_person_name_key, person_identity_key, unique_groups, Gender, Person,
+    PersonConstraint, PersonIdentityKey, PreviousDistribution,
+};
 use anyhow::{anyhow, Result};
 use log::info;
 use rand::prelude::*;
@@ -243,16 +246,6 @@ where
     Ok(first)
 }
 
-fn normalize_person_name_key(name: &str) -> String {
-    let mut key = String::with_capacity(name.len());
-    for c in name.chars().flat_map(|c| c.to_lowercase()) {
-        if c.is_alphanumeric() {
-            key.push(c);
-        }
-    }
-    key
-}
-
 // ─── Validity check ──────────────────────────────────────────────────────────
 
 pub fn is_valid(sol: &Solution, people: &[Person], cfg: &Config) -> bool {
@@ -406,7 +399,13 @@ fn normalize_address_key(address: &str) -> String {
 
 // ─── Objective function (lower = better) ─────────────────────────────────────
 
-pub fn evaluate(sol: &Solution, people: &[Person], travel: &TravelMatrix, cfg: &Config) -> f64 {
+pub fn evaluate(
+    sol: &Solution,
+    people: &[Person],
+    travel: &TravelMatrix,
+    cfg: &Config,
+    previous: Option<&PreviousDistribution>,
+) -> f64 {
     let n = people.len();
     let w = &cfg.weights;
     let mut cost = 0.0;
@@ -478,7 +477,71 @@ pub fn evaluate(sol: &Solution, people: &[Person], travel: &TravelMatrix, cfg: &
         }
     }
 
+    // --- 7. Avoid repeating last event's hosts and pairings ---
+    if let Some(previous) = previous {
+        for i in 0..n {
+            let person_key = person_identity_key(&people[i].name, people[i].year_of_birth);
+
+            if i != sol.drinks_host[i] {
+                let current_drinks_host =
+                    normalize_person_name_key(&people[sol.drinks_host[i]].name);
+                if previous
+                    .previous_drinks_host_by_person
+                    .get(&person_key)
+                    .is_some_and(|previous_host| previous_host == &current_drinks_host)
+                {
+                    cost += w.avoid_same_host_as_previous;
+                }
+            }
+
+            if i != sol.dinner_host[i] {
+                let current_dinner_host =
+                    normalize_person_name_key(&people[sol.dinner_host[i]].name);
+                if previous
+                    .previous_dinner_host_by_person
+                    .get(&person_key)
+                    .is_some_and(|previous_host| previous_host == &current_dinner_host)
+                {
+                    cost += w.avoid_same_host_as_previous;
+                }
+            }
+        }
+
+        for i in 0..n {
+            for j in (i + 1)..n {
+                if people[i].group_id == people[j].group_id {
+                    continue;
+                }
+
+                let pair = canonical_identity_pair(
+                    person_identity_key(&people[i].name, people[i].year_of_birth),
+                    person_identity_key(&people[j].name, people[j].year_of_birth),
+                );
+                if !previous.pairs_together.contains(&pair) {
+                    continue;
+                }
+                if sol.drinks_host[i] == sol.drinks_host[j] {
+                    cost += w.avoid_pair_same_as_previous;
+                }
+                if sol.dinner_host[i] == sol.dinner_host[j] {
+                    cost += w.avoid_pair_same_as_previous;
+                }
+            }
+        }
+    }
+
     cost
+}
+
+fn canonical_identity_pair(
+    a: PersonIdentityKey,
+    b: PersonIdentityKey,
+) -> (PersonIdentityKey, PersonIdentityKey) {
+    if a <= b {
+        (a, b)
+    } else {
+        (b, a)
+    }
 }
 
 fn age_variance(ages: &[u32]) -> f64 {
@@ -1666,6 +1729,7 @@ pub fn simulated_annealing(
     hosts_dinner: &[usize],
     travel: &TravelMatrix,
     cfg: &Config,
+    previous: Option<&PreviousDistribution>,
     constraints: &ResolvedConstraints,
     log_progress: bool,
 ) -> Result<Solution> {
@@ -1679,7 +1743,7 @@ pub fn simulated_annealing(
     }
 
     let mut current = initial.clone();
-    let mut current_cost = evaluate(&current, people, travel, cfg);
+    let mut current_cost = evaluate(&current, people, travel, cfg, previous);
     let mut best = current.clone();
     let mut best_cost = current_cost;
 
@@ -1706,7 +1770,7 @@ pub fn simulated_annealing(
                 continue;
             }
 
-            let neighbor_cost = evaluate(&neighbor, people, travel, cfg);
+            let neighbor_cost = evaluate(&neighbor, people, travel, cfg, previous);
             let delta = neighbor_cost - current_cost;
 
             if delta < 0.0 || rng.gen::<f64>() < (-delta / temperature).exp() {
@@ -1812,4 +1876,105 @@ fn pick_different_host(hosts: &[usize], current: usize, rng: &mut impl Rng) -> O
         }
     }
     hosts.iter().copied().find(|&h| h != current)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{Config, GoogleDriveConfig, SAParams, Weights};
+
+    fn test_person(
+        group_id: u32,
+        name: &str,
+        year_of_birth: u32,
+        receiving_for_drinks: bool,
+        receiving_for_dinner: bool,
+    ) -> Person {
+        Person {
+            group_id,
+            name: name.to_string(),
+            gender: Gender::Other,
+            year_of_birth,
+            address: format!("{name} address"),
+            receiving_for_drinks,
+            max_guests_drinks: 10,
+            receiving_for_dinner,
+            max_guests_dinner: 10,
+            can_host_pmr: false,
+        }
+    }
+
+    fn test_config() -> Config {
+        Config {
+            dessert_address: "Dessert".to_string(),
+            dessert_postal_code: "00000".to_string(),
+            dessert_city: "City".to_string(),
+            min_guests_for_drinks: 1,
+            min_guests_for_dinner: 1,
+            ors_api_key: String::new(),
+            weights: Weights {
+                age_homogeneity_drinks: 0.0,
+                age_homogeneity_dinner: 0.0,
+                gender_balance_drinks: 0.0,
+                gender_balance_dinner: 0.0,
+                avoid_same_host_drinks_dinner: 0.0,
+                avoid_pair_same_event: 0.0,
+                avoid_same_host_as_previous: 7.0,
+                avoid_pair_same_as_previous: 11.0,
+                minimize_walk_time: 0.0,
+                host_walk_drinks_to_dinner: 0.0,
+            },
+            simulated_annealing: SAParams {
+                runs: 1,
+                parallel_threads: 1,
+                initial_temperature: 1.0,
+                cooling_rate: 0.99,
+                min_temperature: 0.01,
+                iterations_per_temperature: 1,
+                max_iterations: 1,
+            },
+            google_drive: GoogleDriveConfig::default(),
+        }
+    }
+
+    fn test_travel_matrix(n: usize) -> TravelMatrix {
+        TravelMatrix {
+            n,
+            home_to: vec![vec![0.0; n]; n],
+            to_dessert: vec![0.0; n],
+        }
+    }
+
+    #[test]
+    fn evaluate_penalizes_repeated_previous_hosts_and_pairs() {
+        let people = vec![
+            test_person(1, "Alice", 1990, false, false),
+            test_person(2, "Bob", 1991, true, true),
+            test_person(3, "Cara", 1992, true, true),
+        ];
+        let travel = test_travel_matrix(people.len());
+        let cfg = test_config();
+        let sol = Solution {
+            drinks_host: vec![1, 1, 1],
+            dinner_host: vec![2, 1, 2],
+        };
+
+        let mut previous = PreviousDistribution::default();
+        previous.previous_drinks_host_by_person.insert(
+            person_identity_key("Alice", 1990),
+            normalize_person_name_key("Bob"),
+        );
+        previous.previous_dinner_host_by_person.insert(
+            person_identity_key("Alice", 1990),
+            normalize_person_name_key("Cara"),
+        );
+        previous.pairs_together.insert(canonical_identity_pair(
+            person_identity_key("Alice", 1990),
+            person_identity_key("Bob", 1991),
+        ));
+
+        let score = evaluate(&sol, &people, &travel, &cfg, Some(&previous));
+
+        assert_eq!(score, 25.0);
+    }
 }

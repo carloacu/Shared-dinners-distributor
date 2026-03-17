@@ -20,7 +20,19 @@ Ce script fait tout :
 
 ## Lancer
 
-    cargo run --release
+    cargo run --release -- data/input/people/people_2.csv
+
+Avec contraintes :
+
+    cargo run --release -- data/input/people/people_2.csv --constraints data/input/constraints/constraints.csv
+
+Avec resultat precedent explicite :
+
+    cargo run --release -- data/input/people/people_2.csv --previous-distribution data/input/previous_distribution/example_previous_result.csv
+
+Avec les deux :
+
+    cargo run --release -- data/input/people/people_2.csv --constraints data/input/constraints/constraints.csv --previous-distribution data/input/previous_distribution/example_previous_result.csv
 
 Les fichiers de sortie sont timestampes et non ecrases :
 `data/output/result_YYYYMMDD_HHMMSS.{txt,csv,xlsx}`.
@@ -41,6 +53,7 @@ Les fichiers de sortie sont timestampes et non ecrases :
     +-- data/
         |-- input/
         |   |-- people.csv
+        |   |-- previous_distribution/ <- exemple(s) de resultat precedent
         |   +-- config.yaml
         |-- cache/                <- auto-genere
         +-- output/               <- auto-genere
@@ -63,6 +76,8 @@ Les fichiers de sortie sont timestampes et non ecrases :
       gender_balance_dinner: 8.0
       avoid_same_host_drinks_dinner: 3.0
       avoid_pair_same_event: 6.0
+      avoid_same_host_as_previous: 30.0
+      avoid_pair_same_as_previous: 15.0
       minimize_walk_time: 2.0
       host_walk_drinks_to_dinner: 4.0
     simulated_annealing:
@@ -129,8 +144,27 @@ Critere                       | Parametre
 ------------------------------|--------------------------------
 Homogeneite des ages          | age_homogeneity_drinks/dinner
 Eviter meme hote apero+diner  | avoid_same_host_drinks_dinner
+Eviter le meme hote qu avant  | avoid_same_host_as_previous
+Eviter les paires deja vues   | avoid_pair_same_as_previous
 Minimiser temps de marche     | minimize_walk_time
 Trajet de l hote diner        | host_walk_drinks_to_dinner
 
 ### Recuit simule
 A chaque iteration : deplace un groupe vers un autre hote, accepte si amelioration ou avec probabilite exp(-dE/T). T decroit d'un facteur  jusqu'a .
+
+## Previous distribution
+
+Tu peux passer un CSV de resultat precedent avec `--previous-distribution`.
+Le format attendu est le format de sortie CSV : `name,year_of_birth,group_id,drinks_host,dinner_host,dessert`.
+
+Exemple :
+
+    cargo run --release -- data/input/people/people_2.csv --previous-distribution data/input/previous_distribution/example_previous_result.csv
+
+Le programme ajoute alors deux penalites souples :
+
+- eviter qu une personne retourne chez le meme hote qu au precedent evenement
+- eviter que deux personnes deja ensemble au precedent evenement se retrouvent ensemble a nouveau
+
+Les personnes absentes entre les deux editions sont simplement ignorees.
+La colonne `dessert` du resultat precedent est ignoree.

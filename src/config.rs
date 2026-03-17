@@ -48,6 +48,10 @@ pub struct Weights {
     pub avoid_same_host_drinks_dinner: f64,
     #[serde(default = "default_avoid_pair_same_event_weight")]
     pub avoid_pair_same_event: f64,
+    #[serde(default)]
+    pub avoid_same_host_as_previous: f64,
+    #[serde(default)]
+    pub avoid_pair_same_as_previous: f64,
     pub minimize_walk_time: f64,
     pub host_walk_drinks_to_dinner: f64,
 }
