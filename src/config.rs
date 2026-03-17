@@ -9,6 +9,10 @@ pub struct Config {
     pub dessert_city: String,
     pub min_guests_for_drinks: usize,
     pub min_guests_for_dinner: usize,
+    #[serde(default)]
+    pub google_maps_api_key: String,
+    #[serde(default)]
+    #[allow(dead_code)]
     pub ors_api_key: String,
     pub weights: Weights,
     pub simulated_annealing: SAParams,

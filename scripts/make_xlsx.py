@@ -79,12 +79,32 @@ def canonical_cache_key(addr_a, addr_b):
     b = normalize_address(addr_b)
     return f"{a}|||{b}" if a <= b else f"{b}|||{a}"
 
+def coord_key(lat, lon):
+    return f"{float(lat):.7f},{float(lon):.7f}"
+
+def canonical_coord_cache_key(latlon_a, latlon_b):
+    a = coord_key(latlon_a[0], latlon_a[1])
+    b = coord_key(latlon_b[0], latlon_b[1])
+    return f"{a}|||{b}" if a <= b else f"{b}|||{a}"
+
 # Build normalization-insensitive index from existing cache entries.
 dist_normalized = {}
+dist_coords = {}
 for k, v in dist.items():
     if '|||' not in k:
         continue
     left, right = k.split('|||', 1)
+    coordish = (
+        re.fullmatch(r'\s*-?\d+(?:\.\d+)?\s*,\s*-?\d+(?:\.\d+)?\s*', left) and
+        re.fullmatch(r'\s*-?\d+(?:\.\d+)?\s*,\s*-?\d+(?:\.\d+)?\s*', right)
+    )
+    if coordish:
+        llat, llon = [float(x.strip()) for x in left.split(',', 1)]
+        rlat, rlon = [float(x.strip()) for x in right.split(',', 1)]
+        ck = canonical_coord_cache_key((llat, llon), (rlat, rlon))
+        if ck not in dist_coords or v < dist_coords[ck]:
+            dist_coords[ck] = v
+        continue
     ck = canonical_cache_key(left, right)
     if ck not in dist_normalized or v < dist_normalized[ck]:
         dist_normalized[ck] = v
@@ -93,6 +113,13 @@ def walk(addr_from, addr_to):
     """Return walk time in minutes from cache, or 0 if not found."""
     if normalize_address(addr_from) == normalize_address(addr_to):
         return 0.0
+
+    latlon_from = geocode_address(addr_from, cfg)
+    latlon_to = geocode_address(addr_to, cfg)
+    if latlon_from is not None and latlon_to is not None:
+        key = canonical_coord_cache_key(latlon_from, latlon_to)
+        if key in dist_coords:
+            return round(dist_coords[key] / 60.0, 1)
 
     key = canonical_cache_key(addr_from, addr_to)
     if key in dist_normalized:
@@ -107,24 +134,27 @@ def walk(addr_from, addr_to):
     reverse = f"{addr_to}|||{addr_from}"
     return round(dist.get(legacy, dist.get(reverse, 0)) / 60.0, 1)
 
-def geocode_with_ors(address, api_key):
+def geocode_with_google(address, api_key):
     import urllib.parse, urllib.request
     url = (
-        "https://api.openrouteservice.org/geocode/search"
-        f"?api_key={urllib.parse.quote(api_key)}"
-        f"&text={urllib.parse.quote(address)}&size=1"
+        "https://maps.googleapis.com/maps/api/geocode/json"
+        f"?address={urllib.parse.quote(address)}"
+        f"&key={urllib.parse.quote(api_key)}"
     )
     req = urllib.request.Request(url, headers={"User-Agent": "shared-dinners-distributor/1.0"})
     with urllib.request.urlopen(req, timeout=2.5) as resp:
         payload = json.loads(resp.read().decode("utf-8"))
-    features = payload.get("features") or []
-    if not features:
+    if (payload.get("status") or "") != "OK":
         return None
-    coords = (((features[0] or {}).get("geometry") or {}).get("coordinates")) or []
-    if len(coords) < 2:
+    results = payload.get("results") or []
+    if not results:
         return None
-    lon, lat = float(coords[0]), float(coords[1])
-    return (lat, lon)
+    location = (((results[0] or {}).get("geometry") or {}).get("location")) or {}
+    lat = location.get("lat")
+    lon = location.get("lng")
+    if lat is None or lon is None:
+        return None
+    return (float(lat), float(lon))
 
 def geocode_with_nominatim(address):
     import urllib.parse, urllib.request
@@ -153,14 +183,14 @@ def geocode_address(address, cfg):
         return (float(cached[0]), float(cached[1]))
 
     latlon = None
-    ors_failed = False
+    google_failed = False
     nom_failed = False
-    api_key = str(cfg.get("ors_api_key", "") or "").strip()
-    if api_key and api_key != "YOUR_ORS_API_KEY_HERE":
+    api_key = str(cfg.get("google_maps_api_key", "") or "").strip()
+    if api_key and api_key != "YOUR_GOOGLE_MAPS_API_KEY_HERE":
         try:
-            latlon = geocode_with_ors(address, api_key)
+            latlon = geocode_with_google(address, api_key)
         except Exception:
-            ors_failed = True
+            google_failed = True
             latlon = None
     if latlon is None:
         try:
@@ -168,7 +198,7 @@ def geocode_address(address, cfg):
         except Exception:
             nom_failed = True
             latlon = None
-    if latlon is None and (ors_failed or not api_key) and nom_failed:
+    if latlon is None and (google_failed or not api_key) and nom_failed:
         geocode_disabled = True
 
     if latlon is not None:

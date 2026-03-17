@@ -1911,6 +1911,7 @@ mod tests {
             dessert_city: "City".to_string(),
             min_guests_for_drinks: 1,
             min_guests_for_dinner: 1,
+            google_maps_api_key: String::new(),
             ors_api_key: String::new(),
             weights: Weights {
                 age_homogeneity_drinks: 0.0,

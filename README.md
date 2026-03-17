@@ -68,7 +68,7 @@ Les fichiers de sortie sont timestampes et non ecrases :
     dessert_city: "Issy-les-Moulineaux"
     min_guests_for_drinks: 2
     min_guests_for_dinner: 2
-    ors_api_key: ""   # optionnel
+    google_maps_api_key: ""   # optionnel mais recommande pour geocoding + temps de marche
     weights:
       age_homogeneity_drinks: 1.5
       age_homogeneity_dinner: 1.5
@@ -124,10 +124,11 @@ Le nom du fichier uploade reprend le nom local timestampe.
 
 ## Cache
 
- - temps de marche entre adresses.
+ - temps de marche entre paires de coordonnees.
 Si tu changes une adresse dans le CSV :
 
     rm data/cache/distance_cache.json
+    rm data/cache/geocode_cache.json
 
 ---
 

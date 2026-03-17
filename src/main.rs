@@ -103,6 +103,7 @@ fn main() -> Result<()> {
     info!("Computing travel times...");
     let dessert_addr = cfg.dessert_full_address();
     let mut dist_cache = geo::DistCache::load("data/cache/distance_cache.json")?;
+    let mut geocode_cache = geo::GeocodeCache::load("data/cache/geocode_cache.json")?;
     let travel = geo::compute_all_travel_times(
         &people,
         &hosts_drinks,
@@ -110,8 +111,10 @@ fn main() -> Result<()> {
         &dessert_addr,
         &cfg,
         &mut dist_cache,
+        &mut geocode_cache,
     )?;
     dist_cache.save("data/cache/distance_cache.json")?;
+    geocode_cache.save("data/cache/geocode_cache.json")?;
 
     // 6. Run initial solution + hard-constraint repair + simulated annealing multiple times
     let total_runs = cfg.simulated_annealing.runs.max(1);
