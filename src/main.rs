@@ -6,7 +6,7 @@ mod solver;
 
 use anyhow::{anyhow, Result};
 use chrono::Local;
-use log::info;
+use log::{info, warn};
 use std::collections::HashMap;
 use std::env;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -398,8 +398,9 @@ fn run_iterations_sequential(
     constraints: &solver::ResolvedConstraints,
 ) -> Result<Vec<OptimizationRunResult>> {
     let mut results = Vec::with_capacity(total_runs);
+    let mut failed_runs = 0usize;
     for run_index in 1..=total_runs {
-        results.push(run_single_iteration(
+        match run_single_iteration(
             run_index,
             total_runs,
             people,
@@ -410,7 +411,30 @@ fn run_iterations_sequential(
             previous_distribution,
             constraints,
             true,
-        )?);
+        ) {
+            Ok(run) => results.push(run),
+            Err(e) => {
+                failed_runs += 1;
+                warn!(
+                    "Run {}/{} failed and will be skipped: {}",
+                    run_index, total_runs, e
+                );
+            }
+        }
+    }
+
+    if failed_runs > 0 {
+        warn!(
+            "{} out of {} optimization run(s) failed.",
+            failed_runs, total_runs
+        );
+    }
+
+    if results.is_empty() {
+        return Err(anyhow!(
+            "All {} optimization run(s) failed; no valid result was produced",
+            total_runs
+        ));
     }
     Ok(results)
 }
@@ -459,12 +483,30 @@ fn run_iterations_parallel(
         drop(tx);
 
         let mut results = Vec::with_capacity(total_runs);
+        let mut failed_runs = 0usize;
         for _ in 0..total_runs {
             match rx.recv() {
                 Ok(Ok(run)) => results.push(run),
-                Ok(Err(e)) => return Err(e),
+                Ok(Err(e)) => {
+                    failed_runs += 1;
+                    warn!("One optimization run failed and will be skipped: {}", e);
+                }
                 Err(e) => return Err(anyhow!("Failed to receive parallel run result: {}", e)),
             }
+        }
+
+        if failed_runs > 0 {
+            warn!(
+                "{} out of {} optimization run(s) failed.",
+                failed_runs, total_runs
+            );
+        }
+
+        if results.is_empty() {
+            return Err(anyhow!(
+                "All {} optimization run(s) failed; no valid result was produced",
+                total_runs
+            ));
         }
         Ok(results)
     })
