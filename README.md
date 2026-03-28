@@ -43,6 +43,28 @@ Des fichiers KML Google My Maps sont aussi generes :
 
 ---
 
+## Convertir un CSV Google Forms
+
+Le script `scripts/google_answers_to_people.py` convertit un export Google Forms vers le format exact attendu dans `data/input/people/`.
+
+Avec fichier d'entree et fichier de sortie explicites :
+
+    python3 scripts/google_answers_to_people.py data/google_from_answers/happy_agape_2.csv --output data/input/people/happy_agape_2.csv
+
+Version courte :
+
+    python3 scripts/google_answers_to_people.py data/google_from_answers/happy_agape_2.csv -o data/input/people/happy_agape_2.csv
+
+Si `--output` n'est pas precise, le script ecrit par defaut dans :
+
+    data/input/people/<nom_du_fichier_source>.csv
+
+Exemple :
+
+    python3 scripts/google_answers_to_people.py data/google_from_answers/happy_agape_2.csv
+
+---
+
 ## Structure
 
     progressive_dinner/
@@ -50,6 +72,7 @@ Des fichiers KML Google My Maps sont aussi generes :
     |-- Cargo.toml
     |-- src/
     |-- scripts/
+    |   +-- google_answers_to_people.py <- convertit un export Google Forms vers people.csv
     |   +-- upload_to_drive.py    <- Google Drive (optionnel)
     |-- credentials/              <- ignore par git
     |   +-- client_secret.json
