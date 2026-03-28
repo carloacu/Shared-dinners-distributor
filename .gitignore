@@ -4,3 +4,4 @@ target/
 credentials/
 data/cache/
 data/output/
+.codex
