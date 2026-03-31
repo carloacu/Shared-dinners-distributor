@@ -476,6 +476,11 @@ with open(people_path) as f:
 addr_map = {p['name']: p['addr'] for p in people_csv}
 person_info = {p['name']: p for p in people_csv}
 
+def display_person(name):
+    info = person_info.get(name, {})
+    yob = info.get('year_of_birth')
+    return f"{name} ({yob})" if yob is not None else name
+
 def group_stats_text(guest_rows):
     ages = []
     m_count = 0
@@ -533,7 +538,7 @@ ws.row_dimensions[1].height = 40
 
 hdrs   = ["👤 Nom","🍸 Aperitif chez","🍽️ Diner chez","🚶 Maison→Apero (min)","🚶 Apero→Diner (min)","🚶 Diner→Dessert (min)","📊 Total marche (min)"]
 colors = ["1D4ED8","1D4ED8","C2410C","059669","059669","7C3AED","B91C1C"]
-widths = [42,34,34,18,18,20,17]
+widths = [48,40,40,18,18,20,17]
 ws.row_dimensions[2].height = 26
 for ci,(h,c,w) in enumerate(zip(hdrs,colors,widths),1):
     cell = ws.cell(row=2,column=ci,value=h)
@@ -544,12 +549,12 @@ for ri,r in enumerate(rows,3):
     ws.row_dimensions[ri].height = 19
     same = r['drinks_host']==r['dinner_host']
     bg = fill("FFCCBC") if same else fill("F5F5F5" if ri%2==0 else "FFFFFF")
-    vals = [r['name'],r['drinks_host'],r['dinner_host'],
+    vals = [display_person(r['name']),display_person(r['drinks_host']),display_person(r['dinner_host']),
             r['w1'],r['w2'],r['w3'],f"=D{ri}+E{ri}+F{ri}"]
     for ci,v in enumerate(vals,1):
         c = ws.cell(row=ri,column=ci,value=v)
         c.fill=bg; c.font=cfont(bold=(ci==1))
-        c.alignment=lft() if ci==1 else ctr(); c.border=bd()
+        c.alignment=lft() if ci <= 3 else ctr(); c.border=bd()
         if ci>=4: c.number_format='0.0'
 
 avg_row = len(rows)+3
@@ -586,7 +591,7 @@ ws2["A1"]="🍸 APERITIF — Repartition par hote"
 ws2["A1"].font=Font(name='Arial',bold=True,size=14,color='FFFFFF')
 ws2["A1"].fill=fill("1565C0"); ws2["A1"].alignment=ctr()
 ws2.row_dimensions[1].height=30
-for col,w in zip([1,2,3,4],[40,20,36,20]): cw(ws2,col,w)
+for col,w in zip([1,2,3,4],[46,20,42,20]): cw(ws2,col,w)
 
 drinks_groups = defaultdict(list)
 for r in rows:
@@ -599,7 +604,7 @@ for host,guests in drinks_groups.items():
     host_addr = addr_map.get(host,'')
     ws2.row_dimensions[row].height=26
     ws2.merge_cells(f"A{row}:D{row}")
-    ws2[f"A{row}"]=f"Chez {host}  —  {host_addr}"
+    ws2[f"A{row}"]=f"Chez {display_person(host)}  —  {host_addr}"
     ws2[f"A{row}"].font=Font(name='Arial',bold=True,size=11,color='FFFFFF')
     ws2[f"A{row}"].fill=fill("0D47A1"); ws2[f"A{row}"].alignment=lft(); row+=1
     ws2.row_dimensions[row].height=18
@@ -622,7 +627,7 @@ for host,guests in drinks_groups.items():
     else:
         for g in guests:
             ws2.row_dimensions[row].height=18
-            for ci,v in enumerate([g['name'],g['w1'],g['dinner_host'],g['w2']],1):
+            for ci,v in enumerate([display_person(g['name']),g['w1'],display_person(g['dinner_host']),g['w2']],1):
                 c=ws2.cell(row=row,column=ci,value=v)
                 c.fill=fill("E3F2FD"); c.font=cfont(bold=(ci==1))
                 c.alignment=lft() if ci in (1,3) else ctr(); c.border=bd()
@@ -638,7 +643,7 @@ ws3["A1"]="🍽️ DINER — Repartition par hote"
 ws3["A1"].font=Font(name='Arial',bold=True,size=14,color='FFFFFF')
 ws3["A1"].fill=fill("E65100"); ws3["A1"].alignment=ctr()
 ws3.row_dimensions[1].height=30
-for col,w in zip([1,2,3,4],[40,22,34,20]): cw(ws3,col,w)
+for col,w in zip([1,2,3,4],[46,22,40,20]): cw(ws3,col,w)
 
 dinner_groups = defaultdict(list)
 for r in rows:
@@ -651,7 +656,7 @@ for host,guests in dinner_groups.items():
     host_addr=addr_map.get(host,'')
     ws3.row_dimensions[row].height=26
     ws3.merge_cells(f"A{row}:D{row}")
-    ws3[f"A{row}"]=f"Chez {host}  —  {host_addr}"
+    ws3[f"A{row}"]=f"Chez {display_person(host)}  —  {host_addr}"
     ws3[f"A{row}"].font=Font(name='Arial',bold=True,size=11,color='FFFFFF')
     ws3[f"A{row}"].fill=fill("BF360C"); ws3[f"A{row}"].alignment=lft(); row+=1
     ws3.row_dimensions[row].height=18
@@ -674,7 +679,7 @@ for host,guests in dinner_groups.items():
     else:
         for g in guests:
             ws3.row_dimensions[row].height=18
-            for ci,v in enumerate([g['name'],g['w2'],g['drinks_host'],g['w3']],1):
+            for ci,v in enumerate([display_person(g['name']),g['w2'],display_person(g['drinks_host']),g['w3']],1):
                 c=ws3.cell(row=row,column=ci,value=v)
                 c.fill=fill("FFF3E0")
                 c.font=cfont(bold=(ci==1)); c.alignment=lft() if ci in (1,3) else ctr(); c.border=bd()

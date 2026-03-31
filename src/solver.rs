@@ -325,7 +325,15 @@ pub fn is_valid(sol: &Solution, people: &[Person], cfg: &Config) -> bool {
         }
     }
 
-    // 6. One physical venue cannot host multiple groups for the same event.
+    // 6. A person cannot be used as both a drinks host and a dinner host
+    // anywhere in the same event.
+    for host_idx in drinks_count.keys() {
+        if dinner_count.contains_key(host_idx) {
+            return false;
+        }
+    }
+
+    // 7. One physical venue cannot host multiple groups for the same event.
     // This also prevents duplicated person rows at the same address from hosting twice.
     let mut drinks_addr_used: HashMap<String, usize> = HashMap::new();
     for &host_idx in drinks_count.keys() {
@@ -348,6 +356,11 @@ pub fn is_valid(sol: &Solution, people: &[Person], cfg: &Config) -> bool {
     }
 
     true
+}
+
+fn assignments_use_distinct_event_hosts(drinks_assign: &[usize], dinner_assign: &[usize]) -> bool {
+    let drinks_hosts: HashSet<usize> = drinks_assign.iter().copied().collect();
+    dinner_assign.iter().all(|host| !drinks_hosts.contains(host))
 }
 
 pub fn is_valid_with_constraints(
@@ -1082,64 +1095,94 @@ fn systematic_initial_with_forced(
         .map(|&h| people[h].can_host_pmr)
         .collect();
 
-    // Drinks and dinner assignments are independent; solve them in parallel.
-    let (drinks_assign_opt, dinner_assign_opt) = thread::scope(|s| {
-        let drinks_task = s.spawn(|| {
-            assign_groups_to_hosts(
-                &group_sizes,
-                &group_need_pmr,
-                hosts_drinks,
-                &drinks_caps,
-                &drinks_can_pmr,
-                &drinks_owner_group,
-                cfg.min_guests_for_drinks,
-                &forced_drinks_slot,
+    // Drinks and dinner assignments are built separately, but the final solution
+    // must not reuse the same person as a host for both events.
+    let combined_attempts = if ng <= 50 { 48 } else { 96 };
+    let mut saw_drinks_assignment_failure = false;
+    let mut saw_dinner_assignment_failure = false;
+    let mut saw_overlap_failure = false;
+
+    for _ in 0..combined_attempts {
+        let (drinks_assign_opt, dinner_assign_opt) = thread::scope(|s| {
+            let drinks_task = s.spawn(|| {
+                assign_groups_to_hosts(
+                    &group_sizes,
+                    &group_need_pmr,
+                    hosts_drinks,
+                    &drinks_caps,
+                    &drinks_can_pmr,
+                    &drinks_owner_group,
+                    cfg.min_guests_for_drinks,
+                    &forced_drinks_slot,
+                )
+            });
+            let dinner_task = s.spawn(|| {
+                assign_groups_to_hosts(
+                    &group_sizes,
+                    &group_need_pmr,
+                    hosts_dinner,
+                    &dinner_caps,
+                    &dinner_can_pmr,
+                    &dinner_owner_group,
+                    cfg.min_guests_for_dinner,
+                    &forced_dinner_slot,
+                )
+            });
+            (
+                drinks_task.join().ok().flatten(),
+                dinner_task.join().ok().flatten(),
             )
         });
-        let dinner_task = s.spawn(|| {
-            assign_groups_to_hosts(
-                &group_sizes,
-                &group_need_pmr,
-                hosts_dinner,
-                &dinner_caps,
-                &dinner_can_pmr,
-                &dinner_owner_group,
-                cfg.min_guests_for_dinner,
-                &forced_dinner_slot,
-            )
-        });
-        (
-            drinks_task.join().ok().flatten(),
-            dinner_task.join().ok().flatten(),
-        )
-    });
 
-    let drinks_assign = drinks_assign_opt.ok_or_else(|| {
-        anyhow!("Cannot find valid drinks assignment with current min/max and PMR constraints")
-    })?;
-    let dinner_assign = dinner_assign_opt.ok_or_else(|| {
-        anyhow!("Cannot find valid dinner assignment with current min/max and PMR constraints")
-    })?;
+        let Some(drinks_assign) = drinks_assign_opt else {
+            saw_drinks_assignment_failure = true;
+            continue;
+        };
+        let Some(dinner_assign) = dinner_assign_opt else {
+            saw_dinner_assignment_failure = true;
+            continue;
+        };
+        if !assignments_use_distinct_event_hosts(&drinks_assign, &dinner_assign) {
+            saw_overlap_failure = true;
+            continue;
+        }
 
-    let mut drinks_host = vec![0usize; n];
-    let mut dinner_host = vec![0usize; n];
-    for (gi, members) in group_members_list.iter().enumerate() {
-        for member in members {
-            drinks_host[*member] = drinks_assign[gi];
-            dinner_host[*member] = dinner_assign[gi];
+        let mut drinks_host = vec![0usize; n];
+        let mut dinner_host = vec![0usize; n];
+        for (gi, members) in group_members_list.iter().enumerate() {
+            for member in members {
+                drinks_host[*member] = drinks_assign[gi];
+                dinner_host[*member] = dinner_assign[gi];
+            }
+        }
+
+        let sol = Solution {
+            drinks_host,
+            dinner_host,
+        };
+        if is_valid(&sol, people, cfg) {
+            return Ok(sol);
         }
     }
 
-    let sol = Solution {
-        drinks_host,
-        dinner_host,
-    };
-    if !is_valid(&sol, people, cfg) {
+    if saw_overlap_failure {
         return Err(anyhow!(
-            "Systematic assignment produced an invalid solution"
+            "Cannot find valid combined assignment with current min/max, PMR, and no-shared-host-between-events constraints"
         ));
     }
-    Ok(sol)
+    if saw_drinks_assignment_failure {
+        return Err(anyhow!(
+            "Cannot find valid drinks assignment with current min/max and PMR constraints"
+        ));
+    }
+    if saw_dinner_assignment_failure {
+        return Err(anyhow!(
+            "Cannot find valid dinner assignment with current min/max and PMR constraints"
+        ));
+    }
+    Err(anyhow!(
+        "Systematic assignment produced no valid solution"
+    ))
 }
 
 fn assign_groups_to_hosts(
@@ -1977,5 +2020,35 @@ mod tests {
         let score = evaluate(&sol, &people, &travel, &cfg, Some(&previous));
 
         assert_eq!(score, 25.0);
+    }
+
+    #[test]
+    fn is_valid_rejects_person_used_as_host_for_both_events() {
+        let people = vec![
+            test_person(1, "Alice", 1990, true, true),
+            test_person(2, "Bob", 1991, true, true),
+        ];
+        let cfg = test_config();
+        let sol = Solution {
+            drinks_host: vec![0, 1],
+            dinner_host: vec![0, 1],
+        };
+
+        assert!(!is_valid(&sol, &people, &cfg));
+    }
+
+    #[test]
+    fn is_valid_accepts_disjoint_drinks_and_dinner_hosts() {
+        let people = vec![
+            test_person(1, "Alice", 1990, true, true),
+            test_person(2, "Bob", 1991, true, true),
+        ];
+        let cfg = test_config();
+        let sol = Solution {
+            drinks_host: vec![0, 0],
+            dinner_host: vec![1, 1],
+        };
+
+        assert!(is_valid(&sol, &people, &cfg));
     }
 }

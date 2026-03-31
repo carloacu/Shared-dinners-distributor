@@ -63,6 +63,15 @@ Exemple :
 
     python3 scripts/google_answers_to_people.py data/google_from_answers/happy_agape_2.csv
 
+Le script remplit aussi la colonne `gender` :
+- il reutilise d'abord les genres deja presents dans les CSV de `data/input/people/`
+- sinon il consulte `data/cache/gender_inference_cache.json`
+- sinon il fait un appel OpenAI via `OPENAI_API_KEY`, puis met a jour ce cache
+
+Exemple avec cle API :
+
+    OPENAI_API_KEY=sk-... python3 scripts/google_answers_to_people.py data/google_from_answers/happy_agape_2.csv -o data/input/people/happy_agape_2.csv
+
 ---
 
 ## Structure
