@@ -28,6 +28,7 @@ PEOPLE_HEADER = [
     "recieving_for_dinner",
     "number_max_recieving_for_dinner",
     "can_host_pmr",
+    "can_host_both_events",
 ]
 
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
@@ -441,6 +442,7 @@ def build_person(
     dinner: str,
     max_dinner: int,
     can_host_pmr: str,
+    can_host_both_events: str,
     gender_resolver: GenderResolver,
 ) -> dict[str, str | int]:
     name = collapse_spaces(f"{collapse_spaces(first_name)} {collapse_spaces(last_name)}")
@@ -457,6 +459,7 @@ def build_person(
         "recieving_for_dinner": dinner,
         "number_max_recieving_for_dinner": max_dinner,
         "can_host_pmr": can_host_pmr,
+        "can_host_both_events": can_host_both_events,
     }
 
 
@@ -525,6 +528,7 @@ def convert(input_path: Path, output_path: Path) -> int:
                 dinner=dinner,
                 max_dinner=max_dinner,
                 can_host_pmr=can_host_pmr,
+                can_host_both_events="no",
                 gender_resolver=gender_resolver,
             )
             rows.append(primary)
@@ -554,6 +558,7 @@ def convert(input_path: Path, output_path: Path) -> int:
                 dinner="no",
                 max_dinner=0,
                 can_host_pmr="no",
+                can_host_both_events="no",
                 gender_resolver=gender_resolver,
             )
 
@@ -563,6 +568,7 @@ def convert(input_path: Path, output_path: Path) -> int:
                 secondary["recieving_for_dinner"] = dinner
                 secondary["number_max_recieving_for_dinner"] = max_dinner
                 secondary["can_host_pmr"] = can_host_pmr
+                secondary["can_host_both_events"] = "no"
 
             rows.append(secondary)
 

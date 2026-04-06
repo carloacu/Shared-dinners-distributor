@@ -20,6 +20,8 @@ struct CsvRow {
     number_max_recieving_for_dinner: usize,
     #[serde(default)]
     can_host_pmr: String,
+    #[serde(default)]
+    can_host_both_events: String,
 }
 
 /// Raw constraints CSV row
@@ -61,6 +63,7 @@ pub struct Person {
     pub receiving_for_dinner: bool,
     pub max_guests_dinner: usize,
     pub can_host_pmr: bool,
+    pub can_host_both_events: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -147,6 +150,7 @@ pub fn load_people(path: &str) -> Result<Vec<Person>> {
             receiving_for_dinner: parse_yes_no(&row.recieving_for_dinner),
             max_guests_dinner: row.number_max_recieving_for_dinner,
             can_host_pmr: parse_yes_no(&row.can_host_pmr),
+            can_host_both_events: parse_yes_no(&row.can_host_both_events),
         });
     }
     Ok(people)
@@ -295,6 +299,30 @@ mod tests {
     use super::*;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn load_people_reads_can_host_both_events_flag() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("people_{unique}.csv"));
+        fs::write(
+            &path,
+            "\
+ID,name,gender,year_of_birth,postal_address,postal_code,city,recieving_for_drinks,number_max_recieving_for_drinks,recieving_for_dinner,number_max_recieving_for_dinner,can_host_pmr,can_host_both_events\n\
+1,Alice,F,1990,1 rue A,75000,Paris,yes,5,yes,6,yes,yes\n\
+2,Bob,M,1991,2 rue B,75000,Paris,no,0,yes,5,no,\n",
+        )
+        .unwrap();
+
+        let people = load_people(path.to_str().unwrap()).unwrap();
+
+        assert!(people[0].can_host_both_events);
+        assert!(!people[1].can_host_both_events);
+
+        let _ = fs::remove_file(path);
+    }
 
     #[test]
     fn load_previous_distribution_builds_host_and_pair_history() {

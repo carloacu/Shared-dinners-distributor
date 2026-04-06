@@ -325,10 +325,10 @@ pub fn is_valid(sol: &Solution, people: &[Person], cfg: &Config) -> bool {
         }
     }
 
-    // 6. A person cannot be used as both a drinks host and a dinner host
-    // anywhere in the same event.
+    // 6. A person normally cannot host both events unless explicitly allowed
+    // in the input CSV.
     for host_idx in drinks_count.keys() {
-        if dinner_count.contains_key(host_idx) {
+        if dinner_count.contains_key(host_idx) && !people[*host_idx].can_host_both_events {
             return false;
         }
     }
@@ -358,9 +358,15 @@ pub fn is_valid(sol: &Solution, people: &[Person], cfg: &Config) -> bool {
     true
 }
 
-fn assignments_use_distinct_event_hosts(drinks_assign: &[usize], dinner_assign: &[usize]) -> bool {
+fn assignments_respect_event_host_overlap_rule(
+    drinks_assign: &[usize],
+    dinner_assign: &[usize],
+    people: &[Person],
+) -> bool {
     let drinks_hosts: HashSet<usize> = drinks_assign.iter().copied().collect();
-    dinner_assign.iter().all(|host| !drinks_hosts.contains(host))
+    dinner_assign
+        .iter()
+        .all(|host| !drinks_hosts.contains(host) || people[*host].can_host_both_events)
 }
 
 pub fn is_valid_with_constraints(
@@ -1095,8 +1101,8 @@ fn systematic_initial_with_forced(
         .map(|&h| people[h].can_host_pmr)
         .collect();
 
-    // Drinks and dinner assignments are built separately, but the final solution
-    // must not reuse the same person as a host for both events.
+    // Drinks and dinner assignments are built separately. Overlap is only allowed
+    // for hosts explicitly marked in the input CSV.
     let combined_attempts = if ng <= 50 { 48 } else { 96 };
     let mut saw_drinks_assignment_failure = false;
     let mut saw_dinner_assignment_failure = false;
@@ -1142,7 +1148,7 @@ fn systematic_initial_with_forced(
             saw_dinner_assignment_failure = true;
             continue;
         };
-        if !assignments_use_distinct_event_hosts(&drinks_assign, &dinner_assign) {
+        if !assignments_respect_event_host_overlap_rule(&drinks_assign, &dinner_assign, people) {
             saw_overlap_failure = true;
             continue;
         }
@@ -1167,7 +1173,7 @@ fn systematic_initial_with_forced(
 
     if saw_overlap_failure {
         return Err(anyhow!(
-            "Cannot find valid combined assignment with current min/max, PMR, and no-shared-host-between-events constraints"
+            "Cannot find valid combined assignment with current min/max, PMR, and host-overlap constraints"
         ));
     }
     if saw_drinks_assignment_failure {
@@ -1944,6 +1950,7 @@ mod tests {
             receiving_for_dinner,
             max_guests_dinner: 10,
             can_host_pmr: false,
+            can_host_both_events: false,
         }
     }
 
@@ -2047,6 +2054,20 @@ mod tests {
         let sol = Solution {
             drinks_host: vec![0, 0],
             dinner_host: vec![1, 1],
+        };
+
+        assert!(is_valid(&sol, &people, &cfg));
+    }
+
+    #[test]
+    fn is_valid_accepts_person_used_as_host_for_both_events_when_allowed() {
+        let mut alice = test_person(1, "Alice", 1990, true, true);
+        alice.can_host_both_events = true;
+        let people = vec![alice, test_person(2, "Bob", 1991, true, true)];
+        let cfg = test_config();
+        let sol = Solution {
+            drinks_host: vec![0, 0],
+            dinner_host: vec![0, 1],
         };
 
         assert!(is_valid(&sol, &people, &cfg));
