@@ -1027,6 +1027,7 @@ fn select_initial_host_pools(
                 options.push(3);
             }
         } else {
+            options.push(0);
             if drinks_ok {
                 options.push(1);
             }
@@ -1099,7 +1100,7 @@ fn select_initial_host_pools(
 
     let mut current_masks = vec![0u8; all_hosts.len()];
     let mut best_masks: Option<Vec<u8>> = None;
-    let mut best_score: Option<(usize, usize)> = None;
+    let mut best_score: Option<(usize, usize, usize)> = None;
     search_host_pool_assignment(
         0,
         &order,
@@ -1140,7 +1141,7 @@ fn select_initial_host_pools(
             );
         }
         return Err(anyhow!(
-            "Unable to assign all potential hosts while keeping enough drinks and dinner capacity"
+            "Unable to select initial drinks/dinner host pools with enough capacity"
         ));
     };
 
@@ -1178,7 +1179,7 @@ fn search_host_pool_assignment(
     current_dinner_pmr_capacity: usize,
     current_masks: &mut [u8],
     best_masks: &mut Option<Vec<u8>>,
-    best_score: &mut Option<(usize, usize)>,
+    best_score: &mut Option<(usize, usize, usize)>,
 ) {
     if current_drinks_capacity + remaining_drinks_capacity[pos] < total_people
         || current_dinner_capacity + remaining_dinner_capacity[pos] < total_people
@@ -1196,9 +1197,10 @@ fn search_host_pool_assignment(
         {
             return;
         }
+        let unused_count = current_masks.iter().filter(|&&mask| mask == 0).count();
         let both_count = current_masks.iter().filter(|&&mask| mask == 3).count();
         let imbalance = current_drinks_capacity.abs_diff(current_dinner_capacity);
-        let score = (imbalance, both_count);
+        let score = (imbalance, unused_count, both_count);
         if best_score.map(|best| score < best).unwrap_or(true) {
             *best_score = Some(score);
             *best_masks = Some(current_masks.to_vec());
@@ -3192,6 +3194,29 @@ mod tests {
 
         assert!(drinks_hosts.contains(&0) || dinner_hosts.contains(&0));
         assert!(drinks_hosts.contains(&1) || dinner_hosts.contains(&1));
+        assert!(is_valid_initial_solution(&sol, &people));
+    }
+
+    #[test]
+    fn initial_solution_can_skip_optional_host_that_cannot_self_host() {
+        let mut alice = test_person(1, "Alice", 1990, true, false);
+        alice.max_guests_drinks = 1;
+        let people = vec![
+            alice,
+            test_person(1, "Alex", 1991, true, false),
+            test_person(2, "Bob", 1992, true, true),
+            test_person(3, "Cara", 1993, false, true),
+        ];
+        let cfg = test_config();
+        let constraints = ResolvedConstraints::empty(people.len());
+
+        let sol =
+            build_initial_solution_with_constraints(&people, &[0, 2], &[2, 3], &cfg, &constraints)
+                .expect("initial solution should be allowed to skip optional host");
+
+        let drinks_hosts: HashSet<usize> = sol.drinks_host.iter().copied().collect();
+
+        assert!(!drinks_hosts.contains(&0));
         assert!(is_valid_initial_solution(&sol, &people));
     }
 }
