@@ -462,6 +462,7 @@ with open(people_path) as f:
         can_dinner = yn(pick(r, 'recieving_for_dinner', 'receiving_for_dinner'))
         yob = parse_int(pick(r, 'year_of_birth'), default=None)
         people_csv.append({
+            'group_id': parse_int(pick(r, 'ID', 'id'), default=None),
             'name': pick(r, 'name'),
             'gender': pick(r, 'gender', default=''),
             'year_of_birth': yob,
@@ -714,7 +715,41 @@ for ci,h in enumerate(headers,1):
 
 hosted_drinks = set(drinks_groups.keys())
 hosted_dinner = set(dinner_groups.keys())
-potential_hosts = [p for p in people_csv if p['can_drinks'] or p['can_dinner']]
+potential_hosts_raw = [p for p in people_csv if p['can_drinks'] or p['can_dinner']]
+potential_hosts_by_group = {}
+for p in potential_hosts_raw:
+    key = ("group", p["group_id"]) if p["group_id"] is not None else ("person", p["name"])
+    entry = potential_hosts_by_group.setdefault(key, {
+        "names": [],
+        "addresses": [],
+        "can_drinks": False,
+        "can_dinner": False,
+        "actual_drinks": False,
+        "actual_dinner": False,
+        "max_drinks": 0,
+        "max_dinner": 0,
+    })
+    if p["name"] and p["name"] not in entry["names"]:
+        entry["names"].append(p["name"])
+    if p["addr"] and p["addr"] not in entry["addresses"]:
+        entry["addresses"].append(p["addr"])
+    entry["can_drinks"] = entry["can_drinks"] or p["can_drinks"]
+    entry["can_dinner"] = entry["can_dinner"] or p["can_dinner"]
+    entry["actual_drinks"] = entry["actual_drinks"] or (p["name"] in hosted_drinks)
+    entry["actual_dinner"] = entry["actual_dinner"] or (p["name"] in hosted_dinner)
+    entry["max_drinks"] = max(entry["max_drinks"], p["max_drinks"])
+    entry["max_dinner"] = max(entry["max_dinner"], p["max_dinner"])
+
+potential_hosts = [{
+    "name": " / ".join(entry["names"]),
+    "addr": " | ".join(entry["addresses"]),
+    "can_drinks": entry["can_drinks"],
+    "can_dinner": entry["can_dinner"],
+    "actual_drinks": entry["actual_drinks"],
+    "actual_dinner": entry["actual_dinner"],
+    "max_drinks": entry["max_drinks"],
+    "max_dinner": entry["max_dinner"],
+} for entry in potential_hosts_by_group.values()]
 potential_hosts.sort(key=lambda p: p['name'].casefold())
 
 if not potential_hosts:
@@ -730,8 +765,8 @@ else:
     for ri,p in enumerate(potential_hosts,3):
         ws4.row_dimensions[ri].height=19
         bg = fill("E8F5E9" if ri%2==0 else "FFFFFF")
-        apero_real = "-" if not p['can_drinks'] else ("Oui" if p['name'] in hosted_drinks else "Non")
-        diner_real = "-" if not p['can_dinner'] else ("Oui" if p['name'] in hosted_dinner else "Non")
+        apero_real = "-" if not p['can_drinks'] else ("Oui" if p['actual_drinks'] else "Non")
+        diner_real = "-" if not p['can_dinner'] else ("Oui" if p['actual_dinner'] else "Non")
         vals = [
             p['name'],
             "Oui" if p['can_drinks'] else "Non",
@@ -750,7 +785,7 @@ else:
             c.border=bd()
 
 map_rows = []
-for p in potential_hosts:
+for p in potential_hosts_raw:
     latlon = geocode_address(p["addr"], cfg)
     tags = []
     if p["can_drinks"] and p["name"] not in hosted_drinks:
