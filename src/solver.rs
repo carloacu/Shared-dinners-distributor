@@ -2953,11 +2953,75 @@ fn perturb(
 ) -> Solution {
     let mut new_sol = sol.clone();
 
-    for _ in 0..groups.len().max(1) {
-        // Pick a random group
+    for _ in 0..(groups.len().max(1) * 2) {
+        if groups.len() >= 2 && rng.gen_bool(0.7) {
+            let a_idx = rng.gen_range(0..groups.len());
+            let mut b_idx = rng.gen_range(0..groups.len());
+            if b_idx == a_idx {
+                b_idx = (b_idx + 1) % groups.len();
+            }
+
+            let (_, rep_a) = groups[a_idx];
+            let (_, rep_b) = groups[b_idx];
+            let members_a = group_members(people, rep_a);
+            let members_b = group_members(people, rep_b);
+            let c_a = constraints.per_person[rep_a];
+            let c_b = constraints.per_person[rep_b];
+
+            let can_swap_drinks = c_a.drinks_host.is_none() && c_b.drinks_host.is_none();
+            let can_swap_dinner = c_a.dinner_host.is_none() && c_b.dinner_host.is_none();
+            if !can_swap_drinks && !can_swap_dinner {
+                continue;
+            }
+
+            let same_size = members_a.len() == members_b.len();
+            let swap_drinks = if can_swap_drinks && can_swap_dinner {
+                if same_size {
+                    rng.gen_bool(0.5)
+                } else {
+                    rng.gen_bool(0.3)
+                }
+            } else {
+                can_swap_drinks
+            };
+
+            if swap_drinks {
+                let host_a = new_sol.drinks_host[members_a[0]];
+                let host_b = new_sol.drinks_host[members_b[0]];
+                if host_a == host_b {
+                    continue;
+                }
+                if !same_size && rng.gen_bool(0.7) {
+                    continue;
+                }
+                for &member in &members_a {
+                    new_sol.drinks_host[member] = host_b;
+                }
+                for &member in &members_b {
+                    new_sol.drinks_host[member] = host_a;
+                }
+                return new_sol;
+            }
+
+            let host_a = new_sol.dinner_host[members_a[0]];
+            let host_b = new_sol.dinner_host[members_b[0]];
+            if host_a == host_b {
+                continue;
+            }
+            if !same_size && rng.gen_bool(0.7) {
+                continue;
+            }
+            for &member in &members_a {
+                new_sol.dinner_host[member] = host_b;
+            }
+            for &member in &members_b {
+                new_sol.dinner_host[member] = host_a;
+            }
+            return new_sol;
+        }
+
         let (_, rep) = groups[rng.gen_range(0..groups.len())];
         let members = group_members(people, rep);
-
         let c = constraints.per_person[rep];
         let drinks_fixed = c.drinks_host.is_some();
         let dinner_fixed = c.dinner_host.is_some();
